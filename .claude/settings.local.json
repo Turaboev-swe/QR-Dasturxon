@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find / -maxdepth 6 -iname \"vendor\" -path \"*qr-dasturxon*\")",
+      "Bash(php -v)",
+      "Bash(composer --version)",
+      "Bash(composer install *)",
+      "Bash(php -m)",
+      "Bash(php --ini)",
+      "Bash(apt list *)",
+      "Bash(php artisan *)",
+      "Read(//home/abdulqayum/Downloads/**)",
+      "Read(//tmp/claude-1000/**)"
+    ]
+  }
+}
