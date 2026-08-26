@@ -4,18 +4,24 @@ namespace App\Http\Controllers\Api;
 
 use App\Exceptions\InvalidQrSessionException;
 use App\Http\Controllers\Controller;
+use App\Models\Order;
+use App\Models\Restaurant;
+use App\Models\RestaurantTable;
 use App\Models\Staff;
 use App\Models\TelegramUser;
 use App\Models\WaiterCall;
 use App\Services\TableResolver;
+use App\Services\TelegramNotifier;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 
 class WaiterCallController extends Controller
 {
     public function __construct(
         private readonly TableResolver $tableResolver,
+        private readonly TelegramNotifier $telegramNotifier,
     ) {}
 
     /**
@@ -74,15 +80,71 @@ class WaiterCallController extends Controller
         /** @var TelegramUser $telegramUser */
         $telegramUser = $request->attributes->get('telegramUser');
 
+        // Once a waiter has picked up a call for this table (see
+        // TelegramWebhookController::handleCallDone), every further
+        // "waiter" call is routed straight to them as a plain reminder
+        // instead of re-broadcasting to the whole group — cleared back to
+        // nobody the moment a new order starts (OrderController::store).
+        // Bill requests are never affected by this — they always broadcast.
+        $isReminderToAssignedWaiter = $type === WaiterCall::TYPE_WAITER && $table->assigned_waiter_telegram_id !== null;
+
         $call = WaiterCall::create([
             'restaurant_id' => $restaurant->id,
             'restaurant_table_id' => $table->id,
             'telegram_user_id' => $telegramUser->id,
-            'status' => WaiterCall::STATUS_PENDING,
+            'status' => $isReminderToAssignedWaiter ? WaiterCall::STATUS_RESOLVED : WaiterCall::STATUS_PENDING,
             'type' => $type,
+            'handled_by_telegram_id' => $isReminderToAssignedWaiter ? $table->assigned_waiter_telegram_id : null,
+            'handled_by_name' => $isReminderToAssignedWaiter ? $table->assigned_waiter_name : null,
         ]);
 
+        if ($restaurant->waiter_chat_id) {
+            $this->notifyWaiter($restaurant, $table, $call, $isReminderToAssignedWaiter);
+        }
+
         return response()->json(['waiter_call' => $call], 201);
+    }
+
+    /**
+     * Best-effort push to the restaurant's waiter chat — a missing chat id
+     * is the normal, silent case; any other failure is logged and
+     * swallowed, the call is already committed.
+     */
+    private function notifyWaiter(Restaurant $restaurant, RestaurantTable $table, WaiterCall $call, bool $isReminderToAssignedWaiter): void
+    {
+        $tableName = $table->name ?: "Stol {$table->code}";
+        $replyMarkup = null;
+
+        if ($call->type === WaiterCall::TYPE_BILL) {
+            // Sums every currently-unpaid order for this table. Since nothing
+            // sets `payment_status` to `paid` yet (a separate, later task —
+            // see CLAUDE.md), this will over-count a table's bill with any
+            // of its past, already-settled visits until that lands.
+            $total = Order::query()
+                ->where('restaurant_table_id', $table->id)
+                ->where('payment_status', Order::PAYMENT_STATUS_UNPAID)
+                ->with('items')
+                ->get()
+                ->sum(fn (Order $order) => $order->calculateTotal());
+
+            $text = "🧾 Hisob so'raldi — {$tableName}\nJami: ".number_format($total, 0, '.', ' ')." so'm";
+            $replyMarkup = ['inline_keyboard' => [[
+                ['text' => '✅ Bajarildi', 'callback_data' => "call_done:{$call->id}"],
+            ]]];
+        } elseif ($isReminderToAssignedWaiter) {
+            $text = "🔔 {$table->assigned_waiter_name}, sizni Stol {$table->code}dan yana chaqirishmoqda";
+        } else {
+            $text = "🔔 Ofitsiant chaqirildi — {$tableName}";
+            $replyMarkup = ['inline_keyboard' => [[
+                ['text' => '✅ Bajarildi', 'callback_data' => "call_done:{$call->id}"],
+            ]]];
+        }
+
+        try {
+            $this->telegramNotifier->sendMessage($restaurant->waiter_chat_id, $text, $replyMarkup);
+        } catch (\Throwable $e) {
+            Log::warning('telegram.waiter_notify_failed', ['call_id' => $call->id, 'error' => $e->getMessage()]);
+        }
     }
 
     /**

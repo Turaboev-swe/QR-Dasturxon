@@ -41,6 +41,8 @@ class DatabaseSeeder extends Seeder
                 'is_active' => true,
                 'is_verified' => true,
                 'badge_text' => 'TOP-10 milliy oshxona',
+                'kitchen_chat_id' => config('services.telegram.kitchen_chat_id'),
+                'waiter_chat_id' => config('services.telegram.waiter_chat_id'),
             ],
         );
 

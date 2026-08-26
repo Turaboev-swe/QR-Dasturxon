@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
-#[Fillable(['restaurant_id', 'restaurant_table_id', 'telegram_user_id', 'status', 'total_price', 'comment', 'payment_preference'])]
+#[Fillable(['restaurant_id', 'restaurant_table_id', 'telegram_user_id', 'status', 'total_price', 'comment', 'payment_status'])]
 class Order extends Model
 {
     use HasFactory;
@@ -38,11 +38,9 @@ class Order extends Model
         self::STATUS_CANCELLED,
     ];
 
-    public const PAYMENT_PREFERENCE_NOW = 'now';
+    public const PAYMENT_STATUS_UNPAID = 'unpaid';
 
-    public const PAYMENT_PREFERENCE_LATER = 'later';
-
-    public const PAYMENT_PREFERENCES = [self::PAYMENT_PREFERENCE_NOW, self::PAYMENT_PREFERENCE_LATER];
+    public const PAYMENT_STATUS_PAID = 'paid';
 
     /**
      * Allowed forward transitions per status. `paid` and `cancelled` are terminal.
@@ -60,6 +58,18 @@ class Order extends Model
     public function canTransitionTo(string $status): bool
     {
         return in_array($status, self::TRANSITIONS[$this->status] ?? [], true);
+    }
+
+    /**
+     * The order's payable total — currently just the sum of its line items.
+     * A `restaurants.service_charge_percent` column is planned (see
+     * CLAUDE.md "Keyingi vazifalar"); once it exists, this method applies
+     * that percentage on top of the item sum, so every caller (waiter-call
+     * bill totals, future receipts) picks up the change for free.
+     */
+    public function calculateTotal(): float
+    {
+        return (float) $this->items->sum('total_price');
     }
 
     protected function casts(): array

@@ -48,18 +48,28 @@ avtomatik aniqlanadi va yaratiladi.
   mustaqil yo'l bilan, ikkalasi ham **faqat Telegram `initData`** orqali,
   login/parol hech qayerda yo'q: mijozlar uchun `telegram.auth`, xodimlar
   uchun `staff.auth` (quyida).
-- Migratsiyalar tayyor: `restaurants` (+ `is_verified`/`badge_text`),
-  `restaurant_tables`, `categories`, `dishes` (+ `allergens` json, +
-  flash-chegirma maydonlari `discount_percent`/`discount_ends_at`/
-  `discount_portions_total`/`discount_portions_remaining`, + ta'm profili
-  `taste_spicy`/`taste_sweet`/`taste_salty`), `telegram_users`, `staff`
-  (+ `telegram_id` unique nullable, `phone` endi faqat ma'lumot uchun
+- Migratsiyalar tayyor: `restaurants` (+ `is_verified`/`badge_text`, +
+  `kitchen_chat_id`/`waiter_chat_id` — quyidagi Telegram xabarnoma
+  bo'limiga qarang), `restaurant_tables` (+ `assigned_waiter_telegram_id`/
+  `assigned_waiter_name` — pastdagi "sticky assignment" bo'limiga
+  qarang), `categories`, `dishes` (+
+  `allergens` json, + flash-chegirma maydonlari `discount_percent`/
+  `discount_ends_at`/`discount_portions_total`/
+  `discount_portions_remaining`, + ta'm profili `taste_spicy`/
+  `taste_sweet`/`taste_salty`), `telegram_users`, `staff` (+
+  `telegram_id` unique nullable, `phone` endi faqat ma'lumot uchun
   ixtiyoriy — `pin_code_hash`/`api_token_hash` butunlay olib tashlangan,
   `2026_08_24_000001_switch_staff_auth_to_telegram.php` migratsiyasida),
-  `orders` (+ `payment_preference`: `now`/`later`), `order_items`,
-  `reviews` (+ `order_id` unique), `waiter_calls` (+ `type`:
-  `waiter`/`bill`), `payments`, `chefs` (restoran oshpazi: `title`,
-  `experience_years`, `specialty`, `tier_badge`, `photo_path`).
+  `orders` (+ `payment_status`: `unpaid`/`paid`, standart `unpaid` —
+  **`payment_preference` (`now`/`later`, mijoz checkout'da tanlagan)
+  butunlay olib tashlangan**: mijoz endi to'lov usulini tanlamaydi,
+  to'lov doim oxirida ofitsiantga to'g'ridan-to'g'ri qilinadi;
+  `payment_status`ni hozircha hech qayerda hech kim `paid`ga
+  o'zgartirmaydi — bu alohida, keyingi vazifa), `order_items`, `reviews`
+  (+ `order_id` unique), `waiter_calls` (+ `type`: `waiter`/`bill`, +
+  `handled_by_telegram_id`/`handled_by_name`), `payments`, `chefs`
+  (restoran oshpazi: `title`, `experience_years`,
+  `specialty`, `tier_badge`, `photo_path`).
 - Modellar: `app/Models/*`. `App\Models\Concerns\HasTranslations::translate()`
   orqali tarjima maydonlaridan tilga mos qiymat olinadi (fallback: `uz`).
   `Order` va `WaiterCall`da `canTransitionTo()` — ruxsat etilgan holat
@@ -79,6 +89,101 @@ avtomatik aniqlanadi va yaratiladi.
   hech qachon request'dan emas, faqat imzolangan initData'dan olinadi).
   Resolve bo'lmasa **422** qaytaradi (URL resursi emas, mijoz kiritmasi
   xatosi hisoblanadi — 404 emas).
+- **Xodimlarga Telegram guruh orqali xabarnoma** — `app/Services/TelegramNotifier.php`
+  (`sendMessage(chatId, text, replyMarkup=null)` / `editMessageText(chatId,
+  messageId, text, replyMarkup=null)`, Laravel `Http` fasadi orqali to'g'ridan-to'g'ri
+  Bot API'ga so'rov yuboradi; `AppServiceProvider`da `TelegramAuth` bilan
+  bir xil naqshda singleton sifatida bog'langan). Har bir restoranning
+  o'z `kitchen_chat_id`/`waiter_chat_id`si bor (config emas — DB
+  ustunlari, chunki kelajakda ko'p restoranli bo'lishi mumkin;
+  `config('services.telegram.kitchen_chat_id'/`waiter_chat_id`)` faqat
+  seederda restoran #1'ni to'ldirish uchun ishlatiladi, ular `.env`da
+  — haqiqiy raqamlarni bu faylga yozmang). Ustun `null` bo'lsa,
+  xabarnoma jim o'tkazib yuboriladi, buyurtma/chaqiruv yaratilishi
+  buzilmaydi; boshqa har qanday Telegram xatosi (tarmoq xatosi — exception,
+  YOKI Telegramning o'zi `{"ok":false,...}` bilan qaytargan xato, masalan
+  bot guruhga qo'shilmagan bo'lsa "chat not found" — ikkalasi ham
+  `TelegramNotifier::call()` ichida markazlashtirilgan holda
+  `Log::warning('telegram.api_call_failed', [...])` bilan yoziladi) hech
+  qachon mijozga xato sifatida ko'rsatilmaydi. **Eslatma**: bot
+  `kitchen_chat_id`/`waiter_chat_id` guruhlariga xabar yubora olishi
+  uchun avval o'sha guruhlarga a'zo qilib qo'shilgan bo'lishi shart —
+  aks holda har doim "chat not found" bilan jim muvaffaqiyatsiz bo'ladi
+  (loglarda ko'rinadi).
+  - `OrderController::store` muvaffaqiyatli bo'lgach `kitchen_chat_id`ga
+    taomlar+miqdor+jami summa va inline "✅ Tayyor" tugmasi
+    (`callback_data: order_ready:{order_id}`) bilan xabar yuboradi.
+  - `WaiterCallController::store`da: `type=waiter` — `waiter_chat_id`ga
+    "Ofitsiant chaqirildi" + "✅ Bajarildi" tugmasi
+    (`call_done:{call_id}`); `type=bill` — "Hisob so'raldi" + hisoblangan
+    jami summa. Summa `Order::calculateTotal()` orqali (hozircha faqat
+    `order_items` yig'indisi) shu stolning barcha `payment_status=unpaid`
+    buyurtmalari bo'yicha qo'shiladi — **bilingan cheklov**: hech kim
+    hali `payment_status`ni `paid`ga o'zgartirmagani uchun, agar bir xil
+    stol avvalgi (allaqachon yakunlangan) tashrifidan hali "unpaid"
+    buyurtmalarga ega bo'lsa, ular ham hisobga qo'shiladi — bu keyingi
+    "hisobni yopish" vazifasi qo'shilgach avtomatik tuzaladi.
+  - **Stolga ofitsiant "yopishib qolishi" (sticky assignment)** — faqat
+    `type=waiter` chaqiruvlarga tegishli, `type=bill` hech qachon bunga
+    aralashmaydi va doim guruhga to'liq broadcast + tugma bilan ketadi:
+    - `restaurant_tables.assigned_waiter_telegram_id`/
+      `assigned_waiter_name` — "hozir bu stol bilan kim shug'ullanmoqda"
+      degan holat, `null` bo'lsa hali hech kim biriktirilmagan.
+      `waiter_calls.handled_by_telegram_id`/`handled_by_name` — har bir
+      aniq chaqiruv yozuvida "buni kim yopgan" degan momentli surat
+      (snapshot).
+    - **Birinchi** `waiter` chaqiruvi (stol hali biriktirilmagan):
+      avvalgi mantiq — butun guruhga broadcast + "✅ Bajarildi" tugmasi.
+      Kimdir shu tugmani bosganda (`TelegramWebhookController::handleCallDone`)
+      — bu Telegram guruhidagi **istalgan a'zo** bo'lishi mumkin, `Staff`
+      jadvalidagi ro'yxatdan o'tgan xodim bo'lishi shart emas — bosgan
+      kishining `callback_query.from`sidan (`id`, `username` bo'lsa
+      `"@username"`, bo'lmasa `first_name`) `assigned_waiter_*` (stolda)
+      va `handled_by_*` (chaqiruv yozuvida) shu daqiqada to'ldiriladi.
+    - **Keyingi** `waiter` chaqiruvlar (stol allaqachon biriktirilgan):
+      guruhga broadcast **qilinmaydi** — o'rniga tugmasiz oddiy eslatma
+      xabari: `"🔔 {assigned_waiter_name}, sizni Stol {code}dan yana
+      chaqirishmoqda"`. Bu yozuv (`waiter_calls`) darhol `resolved`
+      holatida yaratiladi (bajaradigan alohida amal yo'q — bu shunchaki
+      eslatma), `handled_by_*` joriy biriktirilgan ofitsiant bilan bir
+      xil qilib to'ldiriladi. **Diqqat**: bu holatda odatdagi
+      "bir stolga bir vaqtda faqat bitta ochiq chaqiruv" cheklovi
+      ishlamaydi (chunki yozuv hech qachon `pending` holatda qolmaydi)
+      — mijoz istalgancha marta bosishi mumkin, har safar eslatma
+      ketaveradi, ataylab shunday qoldirilgan.
+    - **Tozalash**: `OrderController::store` muvaffaqiyatli buyurtma
+      yaratgach, o'sha stolning `assigned_waiter_*`sini darhol `null`ga
+      qaytaradi — yangi buyurtma yangi tashrif/sessiya deb hisoblanadi,
+      shundan keyingi birinchi `waiter` chaqiruvi yana butun guruhga
+      broadcast bo'ladi.
+  - `POST /api/telegram/webhook` — **`telegram.auth`dan tashqarida**
+    (bu Mini App emas, Telegramning o'zidan keladigan server-to-server
+    so'rov). `TelegramWebhookController` `callback_query.data`ni
+    (`order_ready:{id}` yoki `call_done:{id}`) parse qiladi, tegishli
+    statusni yangilaydi (`order_ready` — kassa panelidagi bosqichma-bosqich
+    `canTransitionTo()`dan farqli, oshxonaning "tayyor" signali
+    `pending`/`confirmed`/`preparing`dan to'g'ridan-to'g'ri `ready`ga
+    "sakraydi" — allaqachon `ready`/`served`/`paid`/`cancelled` bo'lsa
+    hech narsa qilmaydi; `call_done` esa oddiy `canTransitionTo('resolved')`
+    orqali), so'ng `editMessageText` bilan asl xabarni tahrirlaydi
+    (tugmani olib tashlab, "✅ Bajarildi" deb belgilaydi — `message_id`/
+    `chat.id` alohida saqlanmaydi, ular har safar Telegramning o'zi
+    yuborgan `callback_query.message`dan olinadi). `order_ready` uchun
+    qo'shimcha ravishda `waiter_chat_id`ga "Stol {code} buyurtmasi
+    tayyor — olib boring" xabari yuboriladi. Xavfsizlik:
+    `X-Telegram-Bot-Api-Secret-Token` header `config('services.telegram.webhook_secret')`
+    (`.env`dagi `TELEGRAM_WEBHOOK_SECRET`) bilan `hash_equals()` orqali
+    solishtiriladi — mos kelmasa yoki sozlanmagan bo'lsa 403.
+    `callback_query`siz kelgan boshqa update turlari (masalan oddiy xabar)
+    xatosiz `{"ok":true}` bilan e'tiborsiz qoldiriladi (Telegram qayta
+    urinishining oldini olish uchun).
+  - Webhook'ni botga biriktirish (haqiqiy HTTPS manzil tayyor bo'lgach,
+    qo'lda ishga tushiriladi):
+    ```
+    curl -X POST "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook" \
+      -d "url=https://<domain>/api/telegram/webhook" \
+      -d "secret_token=<.env dagi TELEGRAM_WEBHOOK_SECRET qiymati>"
+    ```
 - `app/Services/StaffAuth.php` — **olib tashlangan** (telefon+PIN tizimi
   bilan birga). Xodimni aniqlash endi to'g'ridan-to'g'ri
   `StaffAuthMiddleware` ichida, mijoznikiga o'xshash `TelegramAuth::validate()`
@@ -91,20 +196,23 @@ avtomatik aniqlanadi va yaratiladi.
 - Controllerlar (`app/Http/Controllers/Api/`): `SessionController`
   (`POST /session`), `MenuController` (`GET /menu`), `OrderController`
   (`GET/POST /orders`, `GET /orders/{id}`, xodim uchun `GET /staff/orders`
-  va `PATCH /staff/orders/{id}/status`), `ReviewController`
-  (`GET/POST /reviews` — faqat `served`/`paid` buyurtmaga, bitta
-  buyurtmaga bitta sharh), `WaiterCallController` (`GET/POST
-  /waiter-calls` — `type: waiter|bill`, xodim uchun
+  va `PATCH /staff/orders/{id}/status` — `store()` muvaffaqiyatli
+  bo'lgach kitchen-chatga xabar yuboradi, yuqoriga qarang),
+  `ReviewController` (`GET/POST /reviews` — faqat `served`/`paid`
+  buyurtmaga, bitta buyurtmaga bitta sharh), `WaiterCallController`
+  (`GET/POST /waiter-calls` — `type: waiter|bill`, xodim uchun
   `GET /staff/waiter-calls` va `PATCH /staff/waiter-calls/{id}/status` —
   bir stolga bir vaqtda har bir `type` uchun faqat bitta ochiq chaqiruv,
   ya'ni "ofitsiant" va "hisob" chaqiruvlari bir vaqtda parallel ochiq
-  bo'lishi mumkin), `StaffAuthController` (`GET /staff/me` — joriy
-  `initData` qaysi xodimga tegishli ekanini qaytaradi; `login`/`logout`
-  yo'q, chunki kirish/chiqish umuman mavjud emas), `AdminDishController`
-  va `AdminStatsController`
-  (`/api/staff/admin/*` — faqat `role=admin`: mahsulot mavjudligi,
-  flash-chegirma o'rnatish/bekor qilish, bugungi statistika).
-- `routes/api.php` — barcha endpointlar yozilgan va ishlaydi (19 route;
+  bo'lishi mumkin; `store()` waiter-chatga xabar yuboradi, yuqoriga
+  qarang), `StaffAuthController` (`GET /staff/me` — joriy `initData`
+  qaysi xodimga tegishli ekanini qaytaradi; `login`/`logout` yo'q,
+  chunki kirish/chiqish umuman mavjud emas), `AdminDishController` va
+  `AdminStatsController` (`/api/staff/admin/*` — faqat `role=admin`:
+  mahsulot mavjudligi, flash-chegirma o'rnatish/bekor qilish, bugungi
+  statistika), `TelegramWebhookController` (`POST /telegram/webhook` —
+  yuqoriga qarang).
+- `routes/api.php` — barcha endpointlar yozilgan va ishlaydi (20 route;
   `/staff/login` va `/staff/logout` olib tashlangan — login umuman yo'q).
 - Frontend **uchta alohida route/sahifaga** bo'lingan — bittasi emas:
   - `GET /` → `resources/views/miniapp.blade.php` — faqat **MIJOZ** ko'rinishi.
@@ -153,8 +261,9 @@ avtomatik aniqlanadi va yaratiladi.
     SOS tugmasi — statik favqulodda raqamlar modali (102/103/1178),
     backendga bog'liq emas; sharh qoldirish — mijozning o'zining
     `served`/`paid` va hali sharhlanmagan buyurtmalaridan birini tanlab,
-    1-5 yulduz bilan; checkout ekranida "Hozir/Keyinroq to'lash" tanlovi
-    `orders.payment_preference`ga yoziladi. `POST /api/session`
+    1-5 yulduz bilan; checkout ekranida to'lov usuli tanlovi **yo'q** —
+    mijoz to'lovni tanlamaydi, to'lov doim oxirida ofitsiantga
+    to'g'ridan-to'g'ri qilinadi. `POST /api/session`
     (`start_param`ni talab qiladi) muvaffaqiyatsiz bo'lsa —
     `customer.js`dagi `enterDemoMode()` ishga tushadi: to'liq ekranli
     xatolik o'rniga `GET /api/menu`ning `demo: true` javobi bilan
@@ -210,19 +319,44 @@ avtomatik aniqlanadi va yaratiladi.
 - `.env` va `phpunit.xml` haqiqiy MySQL'ga ulangan (mos ravishda
   `qr_dasturxon` / `qr_dasturxon_testing`, `127.0.0.1:3306`, `root`/`root`
   — mahalliy dasturchi muhiti; CI/production uchun almashtirilishi kerak).
-  `phpunit.xml`da test uchun alohida `TELEGRAM_BOT_TOKEN` bor.
+  `phpunit.xml`da test uchun alohida `TELEGRAM_BOT_TOKEN` bor. `.env`da
+  yana `TELEGRAM_KITCHEN_CHAT_ID`/`TELEGRAM_WAITER_CHAT_ID` (restoran
+  #1 uchun seederga o'qiladigan haqiqiy guruh chat ID'lari) va
+  `TELEGRAM_WEBHOOK_SECRET` bor — **haqiqiy qiymatlarini bu faylga
+  yozmang**, faqat `.env`da saqlanadi.
 - Testlar: `tests/Feature/{SessionInitTest,ReviewTest,WaiterCallTest,
-  OrderTest,AdminPanelTest,MenuTest,StaffAuthTest}.php` — `php artisan test`
-  bilan barchasi o'tadi (41 test, 100 assertion). Barcha xodim testlari
-  endi `TelegramAuth::sign()` bilan imzolangan `X-Telegram-Init-Data`
-  header ishlatadi (`/api/staff/login` yo'q). `MenuTest` demo rejimni
-  ham qamrab oladi: `start_param`siz `demo: true` va faol restoran
-  menyusi qaytishi, faol restoran umuman bo'lmasa 422ga qaytilishi.
-  `OrderTest`/`MenuTest` chegirma mantig'ini (narx, muddati/porsiyasi
-  tugagach yo'qolishi, yetarli bo'lmagan porsiyaga buyurtma rad etilishi) qamrab oladi;
-  `AdminPanelTest` — faqat admin ruxsati, restoranlararo izolyatsiya,
-  statistika to'g'riligi; `StaffAuthTest` — ro'yxatdan o'tgan/o'tmagan/
-  faol bo'lmagan `telegram_id`ning `GET /api/staff/me`ga ta'siri.
+  OrderTest,AdminPanelTest,MenuTest,StaffAuthTest,TelegramWebhookTest}.php`
+  — `php artisan test` bilan barchasi o'tadi (63 test, 162 assertion).
+  Barcha xodim testlari endi `TelegramAuth::sign()` bilan imzolangan
+  `X-Telegram-Init-Data` header ishlatadi (`/api/staff/login` yo'q).
+  `MenuTest` demo rejimni ham qamrab oladi: `start_param`siz `demo: true`
+  va faol restoran menyusi qaytishi, faol restoran umuman bo'lmasa
+  422ga qaytilishi. `OrderTest`/`MenuTest` chegirma mantig'ini (narx,
+  muddati/porsiyasi tugagach yo'qolishi, yetarli bo'lmagan porsiyaga
+  buyurtma rad etilishi) qamrab oladi; `OrderTest` shuningdek
+  `Order::TRANSITIONS`dagi ruxsatsiz o'tishlarni (pending→served
+  sakrash, `paid`dan chiqish), IDOR'ni (mijoz boshqa mijozning
+  buyurtmasini `GET /orders/{id}` orqali ko'ra olmasligi) va
+  kitchen-chat xabarnomasini (`Http::fake()` bilan — chat id
+  sozlanganda yuboriladi, sozlanmaganda `Http::assertNothingSent()`)
+  ham qamrab oladi; `WaiterCallTest` xuddi shunday waiter-chat
+  xabarnomasini, hisob summasi hisobini va sticky-assignment mexanizmini
+  (birinchi chaqiruv broadcast+tugma bilan, biriktirilgan stolga
+  keyingi chaqiruv tugmasiz eslatma bilan va yozuv darhol `resolved`
+  yaratilishi, yangi buyurtmadan keyin biriktirish tozalanib keyingi
+  chaqiruv yana broadcast bo'lishi, `bill` chaqiruvi biriktirishdan
+  qat'i nazar doim broadcast+tugma bilan ketishi) qamrab oladi;
+  `TelegramWebhookTest` — noto'g'ri/yo'q `secret_token` 403,
+  `callback_query`siz update xatosiz o'tkazib yuborilishi,
+  `order_ready`/`call_done` statusni to'g'ri yangilashi va xabarni
+  tahrirlashi, noma'lum id/allaqachon yakunlangan holat uchun
+  idempotent no-op, `call_done` bosgan kishining ma'lumotidan
+  `assigned_waiter_*`/`handled_by_*`ni to'g'ri to'ldirishi (username
+  bo'lsa `@username`, bo'lmasa `first_name`) va `bill` chaqiruviga
+  bunday biriktirish qilmasligi; `AdminPanelTest`
+  — faqat admin ruxsati, restoranlararo izolyatsiya, statistika
+  to'g'riligi; `StaffAuthTest` — ro'yxatdan o'tgan/o'tmagan/faol
+  bo'lmagan `telegram_id`ning `GET /api/staff/me`ga ta'siri.
 - Haqiqiy Telegram botida (`@qr_dasturxon_bot`) Cloudflare quick tunnel
   orqali sinovdan o'tkazilgan: BotFather'da nomlangan Mini App
   (short name orqali, masalan `qrmenu`) yaratilib, shu havola ishlatiladi:
@@ -257,10 +391,26 @@ Tarjima maydonlari JSON ustun sifatida saqlanadi:
    jadvaliga qo'lda `INSERT`/`UPDATE` qilish o'rniga qulay UI berish.
 2. Laravel Reverb (hozir KASSA/OSHXONA EGASI ~6 soniyalik polling bilan
    ishlaydi — buni real-time push'ga almashtirish) va Click/Payme
-   integratsiyasi (`orders.payment_preference` allaqachon "hozir/keyin"
-   niyatini saqlaydi, lekin haqiqiy to'lov shlyuzi ulanmagan).
+   integratsiyasi (to'lov endi checkout'da tanlanmaydi — ofitsiant
+   orqali oxirida amalga oshiriladi, haqiqiy to'lov shlyuzi hali
+   ulanmagan).
 3. Mini App'ni doimiy (vaqtinchalik tunnel emas) HTTPS manzilga deploy
-   qilish va botni shunga qarab qayta sozlash.
+   qilish va botni shunga qarab qayta sozlash — shu bilan birga
+   `POST /api/telegram/webhook`ni haqiqiy `setWebhook` chaqiruvi bilan
+   botga biriktirish (curl misoli yuqorida, "Xodimlarga Telegram guruh
+   orqali xabarnoma" bo'limida — hozircha tunnel URL'i doimiy emasligi
+   sababli ataylab ishga tushirilmagan).
 4. Oshpaz/taom rasmlari (`chefs.photo_path`, `dishes.image_path`) va
    `dishes.taste_*` uchun OSHXONA EGASI panelida boshqaruv UI — hozircha
    faqat seeder orqali to'ldiriladi.
+5. Ofitsiantning "hisob" oqimini yakunlash: hozir `orders.payment_status`
+   hech qayerda `paid`ga o'zgartirilmaydi (standart `unpaid`da qoladi).
+   Bu ustun va `WaiterCallController`dagi "hisob" xabarnomasi allaqachon
+   tayyor — qolgani: ofitsiant "hisob to'landi" tugmasini bosganda
+   tegishli buyurtma(lar)ni `paid`ga o'tkazish kerak.
+6. `restaurants.service_charge_percent` ustuni — hali yo'q, lekin
+   `Order::calculateTotal()` xuddi shunga tayyor qilib yozilgan
+   (hozircha faqat `order_items` yig'indisini qaytaradi). Ustun
+   qo'shilgach, shu metod ichida foizni qo'shish kifoya — barcha
+   chaqiruvchilar (hisob xabarnomasi, kelajakdagi cheklar) avtomatik
+   yangilanadi.

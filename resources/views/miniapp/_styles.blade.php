@@ -256,9 +256,6 @@
     /* checkout */
     .co-item { display: flex; justify-content: space-between; font-size: 12.5px; padding: 8px 0; border-bottom: 1px solid var(--paper-2); }
     .co-total { display: flex; justify-content: space-between; align-items: baseline; font-family: 'Cormorant Garamond', serif; font-weight: 700; font-size: 18px; padding: 12px 0; color: var(--maroon); }
-    .pay-opt { display: flex; gap: 10px; margin: 12px 0; }
-    .pay-btn { flex: 1; padding: 12px; border-radius: 12px; border: 1.5px solid var(--paper-2); background: var(--white); text-align: center; font-size: 12px; font-weight: 800; }
-    .pay-btn.selected { border-color: var(--maroon); background: #FBEFF0; color: var(--maroon); }
 
     #c-order-success { text-align: center; padding: 24px 16px; }
     #c-order-success-title { font-family: 'Cormorant Garamond', serif; font-size: 22px; font-weight: 700; }

@@ -7,10 +7,17 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-#[Fillable(['restaurant_id', 'restaurant_table_id', 'telegram_user_id', 'status', 'type'])]
+#[Fillable(['restaurant_id', 'restaurant_table_id', 'telegram_user_id', 'status', 'type', 'handled_by_telegram_id', 'handled_by_name'])]
 class WaiterCall extends Model
 {
     use HasFactory;
+
+    protected function casts(): array
+    {
+        return [
+            'handled_by_telegram_id' => 'integer',
+        ];
+    }
 
     public const STATUS_PENDING = 'pending';
 

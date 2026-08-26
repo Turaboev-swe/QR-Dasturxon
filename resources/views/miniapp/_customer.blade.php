@@ -58,10 +58,6 @@
             <p><span id="c-checkout-table-label"></span> <span id="c-checkout-table"></span></p>
             <div id="c-checkout-items"></div>
             <div class="co-total"><span id="c-checkout-total-label"></span><b id="c-checkout-total"></b></div>
-            <div class="pay-opt">
-                <div class="pay-btn selected" id="c-pay-now"></div>
-                <div class="pay-btn" id="c-pay-later"></div>
-            </div>
             <button class="confirm-btn" id="c-confirm-order"></button>
             <button class="ghost-btn" id="c-back-to-menu" style="width:100%;margin-top:8px;"></button>
         </main>

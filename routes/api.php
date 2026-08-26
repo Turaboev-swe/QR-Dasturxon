@@ -7,8 +7,15 @@ use App\Http\Controllers\Api\OrderController;
 use App\Http\Controllers\Api\ReviewController;
 use App\Http\Controllers\Api\SessionController;
 use App\Http\Controllers\Api\StaffAuthController;
+use App\Http\Controllers\Api\TelegramWebhookController;
 use App\Http\Controllers\Api\WaiterCallController;
 use Illuminate\Support\Facades\Route;
+
+// Telegram Bot API webhook (inline button callbacks from the kitchen/waiter
+// group chats) — deliberately outside `telegram.auth`, which is for Mini
+// App initData, not server-to-server Bot API pushes. Authenticated instead
+// by TelegramWebhookController via the X-Telegram-Bot-Api-Secret-Token header.
+Route::post('/telegram/webhook', [TelegramWebhookController::class, 'handle']);
 
 Route::middleware('telegram.auth')->group(function () {
     Route::post('/session', [SessionController::class, 'resolve']);

@@ -7,7 +7,6 @@
         activeCategory: 'all',
         dishesById: {},
         cart: {},
-        paymentPreference: 'now',
         flashDish: null,
         flashInterval: null,
         demo: false,
@@ -41,8 +40,6 @@
         el('c-checkout-title').textContent = t('checkoutTitle');
         el('c-checkout-table-label').textContent = t('table') + ':';
         el('c-checkout-total-label').textContent = t('total');
-        el('c-pay-now').textContent = t('payNow');
-        el('c-pay-later').textContent = t('payLater');
         el('c-confirm-order').textContent = t('confirmOrder');
         el('c-back-to-menu').textContent = t('backToMenu');
         el('c-new-order-btn').textContent = t('newOrder');
@@ -529,7 +526,7 @@
         try {
             const result = await M.apiFetch('/api/orders', {
                 method: 'POST',
-                body: JSON.stringify({ items: items, payment_preference: state.paymentPreference }),
+                body: JSON.stringify({ items: items }),
             });
 
             state.cart = {};
@@ -592,17 +589,6 @@
         el('c-new-order-btn').onclick = function () {
             el('c-order-success').classList.add('hidden');
             el('c-menu-view').classList.remove('hidden');
-        };
-
-        el('c-pay-now').onclick = function () {
-            state.paymentPreference = 'now';
-            el('c-pay-now').classList.add('selected');
-            el('c-pay-later').classList.remove('selected');
-        };
-        el('c-pay-later').onclick = function () {
-            state.paymentPreference = 'later';
-            el('c-pay-later').classList.add('selected');
-            el('c-pay-now').classList.remove('selected');
         };
     }
 

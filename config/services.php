@@ -37,6 +37,9 @@ return [
 
     'telegram' => [
         'bot_token' => env('TELEGRAM_BOT_TOKEN'),
+        'kitchen_chat_id' => env('TELEGRAM_KITCHEN_CHAT_ID'),
+        'waiter_chat_id' => env('TELEGRAM_WAITER_CHAT_ID'),
+        'webhook_secret' => env('TELEGRAM_WEBHOOK_SECRET'),
     ],
 
 ];

@@ -9,6 +9,8 @@ use App\Models\Restaurant;
 use App\Models\RestaurantTable;
 use App\Services\TelegramAuth;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Tests\TestCase;
 
 class OrderTest extends TestCase
@@ -133,15 +135,14 @@ class OrderTest extends TestCase
         $this->assertDatabaseCount('orders', 0);
     }
 
-    public function test_payment_preference_is_persisted(): void
+    public function test_new_orders_default_to_an_unpaid_payment_status(): void
     {
         $response = $this->postJson('/api/orders', [
             'items' => [['dish_id' => $this->dish->id, 'quantity' => 1]],
-            'payment_preference' => 'later',
         ], $this->customerHeader());
 
         $response->assertStatus(201);
-        $this->assertSame('later', $response->json('order.payment_preference'));
+        $this->assertSame(Order::PAYMENT_STATUS_UNPAID, $response->json('order.payment_status'));
     }
 
     public function test_staff_from_another_restaurant_cannot_update_order_status(): void
@@ -177,6 +178,139 @@ class OrderTest extends TestCase
         ])];
 
         $response = $this->patchJson("/api/staff/orders/{$order->id}/status", ['status' => 'confirmed'], $foreignAuth);
+
+        $response->assertStatus(404);
+    }
+
+    public function test_staff_cannot_skip_directly_from_pending_to_served(): void
+    {
+        $order = Order::create([
+            'restaurant_id' => $this->restaurant->id,
+            'restaurant_table_id' => $this->table->id,
+            'telegram_user_id' => \App\Models\TelegramUser::create(['telegram_id' => 1, 'first_name' => 'X'])->id,
+            'status' => Order::STATUS_PENDING,
+            'total_price' => 20000,
+        ]);
+
+        \App\Models\Staff::create([
+            'restaurant_id' => $this->restaurant->id,
+            'name' => 'Cashier',
+            'role' => \App\Models\Staff::ROLE_CASHIER,
+            'telegram_id' => 700000001,
+            'is_active' => true,
+        ]);
+
+        $auth = ['X-Telegram-Init-Data' => app(TelegramAuth::class)->sign([
+            'auth_date' => (string) time(),
+            'query_id' => 'AA1',
+            'user' => json_encode(['id' => 700000001, 'first_name' => 'Staff', 'language_code' => 'uz']),
+        ])];
+
+        $response = $this->patchJson("/api/staff/orders/{$order->id}/status", ['status' => 'served'], $auth);
+
+        $response->assertStatus(422);
+        $this->assertSame(Order::STATUS_PENDING, $order->fresh()->status);
+    }
+
+    public function test_staff_cannot_transition_a_terminal_paid_order(): void
+    {
+        $order = Order::create([
+            'restaurant_id' => $this->restaurant->id,
+            'restaurant_table_id' => $this->table->id,
+            'telegram_user_id' => \App\Models\TelegramUser::create(['telegram_id' => 1, 'first_name' => 'X'])->id,
+            'status' => Order::STATUS_PAID,
+            'total_price' => 20000,
+        ]);
+
+        \App\Models\Staff::create([
+            'restaurant_id' => $this->restaurant->id,
+            'name' => 'Cashier',
+            'role' => \App\Models\Staff::ROLE_CASHIER,
+            'telegram_id' => 700000002,
+            'is_active' => true,
+        ]);
+
+        $auth = ['X-Telegram-Init-Data' => app(TelegramAuth::class)->sign([
+            'auth_date' => (string) time(),
+            'query_id' => 'AA1',
+            'user' => json_encode(['id' => 700000002, 'first_name' => 'Staff', 'language_code' => 'uz']),
+        ])];
+
+        $response = $this->patchJson("/api/staff/orders/{$order->id}/status", ['status' => 'pending'], $auth);
+
+        $response->assertStatus(422);
+        $this->assertSame(Order::STATUS_PAID, $order->fresh()->status);
+    }
+
+    public function test_order_creation_notifies_the_kitchen_chat_when_configured(): void
+    {
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 555]])]);
+
+        $this->restaurant->update(['kitchen_chat_id' => -100999]);
+
+        $response = $this->postJson('/api/orders', [
+            'items' => [['dish_id' => $this->dish->id, 'quantity' => 2]],
+        ], $this->customerHeader());
+
+        $response->assertStatus(201);
+        $orderId = $response->json('order.id');
+
+        Http::assertSent(function ($request) use ($orderId) {
+            $body = urldecode($request->body());
+
+            return str_contains($request->url(), '/sendMessage')
+                && str_contains($request->body(), 'chat_id=-100999')
+                && str_contains($body, 'Osh')
+                && str_contains($body, "order_ready:{$orderId}");
+        });
+    }
+
+    public function test_a_telegram_api_level_failure_is_logged_but_order_creation_still_succeeds(): void
+    {
+        // Telegram can return HTTP 200 with `ok: false` for a well-formed but
+        // rejected call (e.g. "chat not found" because the bot was never
+        // added to that group) — Http::post() does not throw for this, so
+        // it must be logged explicitly or it fails completely silently.
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => false, 'error_code' => 400, 'description' => 'Bad Request: chat not found'])]);
+        Log::spy();
+
+        $this->restaurant->update(['kitchen_chat_id' => -100999]);
+
+        $response = $this->postJson('/api/orders', [
+            'items' => [['dish_id' => $this->dish->id, 'quantity' => 1]],
+        ], $this->customerHeader());
+
+        $response->assertStatus(201);
+        Log::shouldHaveReceived('warning')
+            ->once()
+            ->withArgs(fn ($message, $context) => $message === 'telegram.api_call_failed'
+                && $context['description'] === 'Bad Request: chat not found');
+    }
+
+    public function test_order_creation_does_not_call_telegram_when_kitchen_chat_id_is_not_set(): void
+    {
+        Http::fake();
+
+        $response = $this->postJson('/api/orders', [
+            'items' => [['dish_id' => $this->dish->id, 'quantity' => 1]],
+        ], $this->customerHeader());
+
+        $response->assertStatus(201);
+        Http::assertNothingSent();
+    }
+
+    public function test_a_customer_cannot_view_another_customers_order(): void
+    {
+        $otherUser = \App\Models\TelegramUser::create(['telegram_id' => 999999998, 'first_name' => 'Other']);
+        $order = Order::create([
+            'restaurant_id' => $this->restaurant->id,
+            'restaurant_table_id' => $this->table->id,
+            'telegram_user_id' => $otherUser->id,
+            'status' => Order::STATUS_PENDING,
+            'total_price' => 20000,
+        ]);
+
+        $response = $this->getJson("/api/orders/{$order->id}", $this->customerHeader());
 
         $response->assertStatus(404);
     }

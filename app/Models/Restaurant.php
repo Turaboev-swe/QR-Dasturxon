@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['name_translations', 'latitude', 'longitude', 'radius_meters', 'is_active', 'is_verified', 'badge_text'])]
+#[Fillable(['name_translations', 'latitude', 'longitude', 'radius_meters', 'is_active', 'is_verified', 'badge_text', 'kitchen_chat_id', 'waiter_chat_id'])]
 class Restaurant extends Model
 {
     use HasFactory, HasTranslations;
@@ -21,6 +21,8 @@ class Restaurant extends Model
             'longitude' => 'decimal:7',
             'is_active' => 'boolean',
             'is_verified' => 'boolean',
+            'kitchen_chat_id' => 'integer',
+            'waiter_chat_id' => 'integer',
         ];
     }
 

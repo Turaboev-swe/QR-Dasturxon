@@ -77,11 +77,10 @@
             const items = order.items.map(function (i) { return i.dish.name_translations.uz + ' × ' + i.quantity; }).join('<br>');
             const isTerminal = order.status === 'paid' || order.status === 'cancelled';
             const nextStage = NEXT_STAGE[order.status];
-            const payLabel = order.payment_preference === 'later' ? M.t('payPrefLater') : (order.payment_preference === 'now' ? M.t('payPrefNow') : '');
 
             return '<div class="order-card status-' + order.status + '">' +
                 '<div class="order-top"><span class="order-table">' + (order.table ? order.table.name || order.table.code : '') + '</span>' +
-                '<span class="order-time">' + new Date(order.created_at).toLocaleTimeString().slice(0, 5) + (payLabel ? ' · ' + payLabel : '') + '</span></div>' +
+                '<span class="order-time">' + new Date(order.created_at).toLocaleTimeString().slice(0, 5) + '</span></div>' +
                 '<div class="order-items">' + items + '</div>' +
                 '<div class="order-foot">' +
                 '<span class="status-pill">' + M.t(STATUS_KEY[order.status]) + '</span>' +
