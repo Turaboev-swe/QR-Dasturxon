@@ -127,7 +127,17 @@ class WaiterCallController extends Controller
                 ->get()
                 ->sum(fn (Order $order) => $order->calculateTotal());
 
-            $text = "🧾 Hisob so'raldi — {$tableName}\nJami: ".number_format($total, 0, '.', ' ')." so'm";
+            $totalLine = 'Jami: '.number_format($total, 0, '.', ' ').' so\'m';
+
+            // A bill request always broadcasts+button regardless of
+            // assignment (anyone can bring the check) — but if a waiter is
+            // already assigned to this table, the message calls them out by
+            // name so they know it's theirs to handle. This never writes to
+            // assigned_waiter_* — it only reads the existing assignment.
+            $text = $table->assigned_waiter_telegram_id !== null
+                ? "{$table->assigned_waiter_name}, siz xizmat ko'rsatgan Stol {$table->code} hisob so'ramoqda\n{$totalLine}"
+                : "🧾 Hisob so'raldi — {$tableName}\n{$totalLine}";
+
             $replyMarkup = ['inline_keyboard' => [[
                 ['text' => '✅ Bajarildi', 'callback_data' => "call_done:{$call->id}"],
             ]]];

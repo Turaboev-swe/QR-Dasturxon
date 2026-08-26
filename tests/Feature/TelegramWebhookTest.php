@@ -123,7 +123,8 @@ class TelegramWebhookTest extends TestCase
             return str_contains($request->url(), '/editMessageText')
                 && str_contains($request->body(), 'chat_id=-100999')
                 && str_contains($request->body(), 'message_id=42')
-                && str_contains($body, 'Bajarildi');
+                && str_contains($body, 'Bajarildi')
+                && str_contains($body, '"inline_keyboard":[]'); // button actually removed
         });
 
         Http::assertSent(function ($request) {
@@ -131,7 +132,7 @@ class TelegramWebhookTest extends TestCase
 
             return str_contains($request->url(), '/sendMessage')
                 && str_contains($request->body(), 'chat_id=-100888')
-                && str_contains($body, 'Stol 5 buyurtmasi tayyor');
+                && str_contains($body, '✅ Stol 5 buyurtmasi tayyor');
         });
     }
 
@@ -234,6 +235,67 @@ class TelegramWebhookTest extends TestCase
         $this->assertSame('@aziz_waiter', $freshTable->assigned_waiter_name);
     }
 
+    public function test_call_done_edits_the_message_with_the_handlers_name_and_removes_the_button(): void
+    {
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true])]);
+
+        $call = WaiterCall::create([
+            'restaurant_id' => $this->restaurant->id,
+            'restaurant_table_id' => $this->table->id,
+            'telegram_user_id' => null,
+            'status' => WaiterCall::STATUS_PENDING,
+            'type' => WaiterCall::TYPE_WAITER,
+        ]);
+
+        $this->postJson(
+            '/api/telegram/webhook',
+            $this->callbackPayload(
+                "call_done:{$call->id}",
+                chatId: -100888,
+                messageId: 77,
+                text: '🔔 Ofitsiant chaqirildi — Stol 1',
+                from: ['id' => 555000111, 'username' => 'aziz_waiter', 'first_name' => 'Aziz'],
+            ),
+            ['X-Telegram-Bot-Api-Secret-Token' => self::SECRET],
+        );
+
+        Http::assertSent(function ($request) {
+            $body = urldecode($request->body());
+
+            return str_contains($request->url(), '/editMessageText')
+                && str_contains($request->body(), 'chat_id=-100888')
+                && str_contains($request->body(), 'message_id=77')
+                && str_contains($body, '✅ @aziz_waiter bordi')
+                && str_contains($body, '"inline_keyboard":[]');
+        });
+    }
+
+    public function test_call_done_falls_back_to_first_name_in_the_edited_message_when_no_username(): void
+    {
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true])]);
+
+        $call = WaiterCall::create([
+            'restaurant_id' => $this->restaurant->id,
+            'restaurant_table_id' => $this->table->id,
+            'telegram_user_id' => null,
+            'status' => WaiterCall::STATUS_PENDING,
+            'type' => WaiterCall::TYPE_WAITER,
+        ]);
+
+        $this->postJson(
+            '/api/telegram/webhook',
+            $this->callbackPayload("call_done:{$call->id}", from: ['id' => 555000222, 'first_name' => 'Malika']),
+            ['X-Telegram-Bot-Api-Secret-Token' => self::SECRET],
+        );
+
+        Http::assertSent(function ($request) {
+            $body = urldecode($request->body());
+
+            return str_contains($request->url(), '/editMessageText')
+                && str_contains($body, '✅ Malika bordi');
+        });
+    }
+
     public function test_call_done_falls_back_to_first_name_when_the_waiter_has_no_username(): void
     {
         Http::fake(['api.telegram.org/*' => Http::response(['ok' => true])]);
@@ -274,5 +336,97 @@ class TelegramWebhookTest extends TestCase
         );
 
         $this->assertNull($this->table->fresh()->assigned_waiter_telegram_id);
+    }
+
+    public function test_call_done_assigns_only_the_called_table_leaving_other_tables_untouched(): void
+    {
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true])]);
+
+        $otherTable = RestaurantTable::create([
+            'restaurant_id' => $this->restaurant->id,
+            'code' => '6',
+            'name' => 'Stol 6',
+            'is_active' => true,
+        ]);
+
+        $callForTable1 = WaiterCall::create([
+            'restaurant_id' => $this->restaurant->id,
+            'restaurant_table_id' => $this->table->id,
+            'telegram_user_id' => null,
+            'status' => WaiterCall::STATUS_PENDING,
+            'type' => WaiterCall::TYPE_WAITER,
+        ]);
+        $callForTable2 = WaiterCall::create([
+            'restaurant_id' => $this->restaurant->id,
+            'restaurant_table_id' => $otherTable->id,
+            'telegram_user_id' => null,
+            'status' => WaiterCall::STATUS_PENDING,
+            'type' => WaiterCall::TYPE_WAITER,
+        ]);
+
+        $this->postJson(
+            '/api/telegram/webhook',
+            $this->callbackPayload("call_done:{$callForTable1->id}", from: ['id' => 555000111, 'username' => 'aziz_waiter']),
+            ['X-Telegram-Bot-Api-Secret-Token' => self::SECRET],
+        );
+        $this->postJson(
+            '/api/telegram/webhook',
+            $this->callbackPayload("call_done:{$callForTable2->id}", from: ['id' => 666000222, 'username' => 'malika_waiter']),
+            ['X-Telegram-Bot-Api-Secret-Token' => self::SECRET],
+        );
+
+        $freshTable1 = $this->table->fresh();
+        $freshTable2 = $otherTable->fresh();
+
+        $this->assertSame(555000111, $freshTable1->assigned_waiter_telegram_id);
+        $this->assertSame('@aziz_waiter', $freshTable1->assigned_waiter_name);
+        $this->assertSame(666000222, $freshTable2->assigned_waiter_telegram_id);
+        $this->assertSame('@malika_waiter', $freshTable2->assigned_waiter_name);
+        $this->assertNotSame($freshTable1->assigned_waiter_telegram_id, $freshTable2->assigned_waiter_telegram_id);
+    }
+
+    public function test_an_earlier_calls_handled_by_name_snapshot_is_not_mutated_by_a_later_call_with_a_different_username(): void
+    {
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true])]);
+
+        $call1 = WaiterCall::create([
+            'restaurant_id' => $this->restaurant->id,
+            'restaurant_table_id' => $this->table->id,
+            'telegram_user_id' => null,
+            'status' => WaiterCall::STATUS_PENDING,
+            'type' => WaiterCall::TYPE_WAITER,
+        ]);
+        $call2 = WaiterCall::create([
+            'restaurant_id' => $this->restaurant->id,
+            'restaurant_table_id' => $this->table->id,
+            'telegram_user_id' => null,
+            'status' => WaiterCall::STATUS_PENDING,
+            'type' => WaiterCall::TYPE_WAITER,
+        ]);
+
+        $this->postJson(
+            '/api/telegram/webhook',
+            $this->callbackPayload("call_done:{$call1->id}", from: ['id' => 555000111, 'username' => 'aziz_v1', 'first_name' => 'Aziz']),
+            ['X-Telegram-Bot-Api-Secret-Token' => self::SECRET],
+        );
+
+        $this->assertSame('@aziz_v1', $call1->fresh()->handled_by_name);
+        $this->assertSame('@aziz_v1', $this->table->fresh()->assigned_waiter_name);
+
+        // Same telegram id, different username — the only way a "changed
+        // username" can even be represented, since Telegram re-announces
+        // the sender's current username on every callback.
+        $this->postJson(
+            '/api/telegram/webhook',
+            $this->callbackPayload("call_done:{$call2->id}", from: ['id' => 555000111, 'username' => 'aziz_v2', 'first_name' => 'Aziz']),
+            ['X-Telegram-Bot-Api-Secret-Token' => self::SECRET],
+        );
+
+        $this->assertSame('@aziz_v2', $call2->fresh()->handled_by_name);
+        $this->assertSame('@aziz_v2', $this->table->fresh()->assigned_waiter_name);
+
+        // The critical assertion: call1's own snapshot must never be
+        // rewritten by an unrelated later webhook event.
+        $this->assertSame('@aziz_v1', $call1->fresh()->handled_by_name);
     }
 }

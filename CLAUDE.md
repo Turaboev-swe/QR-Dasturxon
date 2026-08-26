@@ -115,14 +115,24 @@ avtomatik aniqlanadi va yaratiladi.
     (`callback_data: order_ready:{order_id}`) bilan xabar yuboradi.
   - `WaiterCallController::store`da: `type=waiter` — `waiter_chat_id`ga
     "Ofitsiant chaqirildi" + "✅ Bajarildi" tugmasi
-    (`call_done:{call_id}`); `type=bill` — "Hisob so'raldi" + hisoblangan
-    jami summa. Summa `Order::calculateTotal()` orqali (hozircha faqat
-    `order_items` yig'indisi) shu stolning barcha `payment_status=unpaid`
-    buyurtmalari bo'yicha qo'shiladi — **bilingan cheklov**: hech kim
-    hali `payment_status`ni `paid`ga o'zgartirmagani uchun, agar bir xil
-    stol avvalgi (allaqachon yakunlangan) tashrifidan hali "unpaid"
-    buyurtmalarga ega bo'lsa, ular ham hisobga qo'shiladi — bu keyingi
-    "hisobni yopish" vazifasi qo'shilgach avtomatik tuzaladi.
+    (`call_done:{call_id}`); `type=bill` — **doim** butun guruhga
+    broadcast + "✅ Bajarildi" tugmasi bilan ketadi (bu hech qachon
+    o'zgarmaydi — hisobni kim bo'lsa ham olib borishi mumkin bo'lishi
+    kerak), lekin xabar matni ikki xil: agar
+    `restaurant_tables.assigned_waiter_telegram_id` shu stolga
+    biriktirilgan bo'lsa — "{assigned_waiter_name}, siz xizmat
+    ko'rsatgan Stol {code} hisob so'ramoqda" bilan boshlanadi (xodimni
+    chaqiradi, lekin faqat **o'qiydi** — bu chaqiruv `assigned_waiter_*`ni
+    o'zgartirmaydi); hech kim biriktirilmagan bo'lsa — oddiy "🧾 Hisob
+    so'raldi — Stol {code}" ishlatiladi. Ikkala holatda ham keyin
+    "Jami: {summa} so'm" davom etadi — summa `Order::calculateTotal()`
+    orqali (hozircha faqat `order_items` yig'indisi) shu stolning
+    barcha `payment_status=unpaid` buyurtmalari bo'yicha qo'shiladi —
+    **bilingan cheklov**: hech kim hali `payment_status`ni `paid`ga
+    o'zgartirmagani uchun, agar bir xil stol avvalgi (allaqachon
+    yakunlangan) tashrifidan hali "unpaid" buyurtmalarga ega bo'lsa,
+    ular ham hisobga qo'shiladi — bu keyingi "hisobni yopish" vazifasi
+    qo'shilgach avtomatik tuzaladi.
   - **Stolga ofitsiant "yopishib qolishi" (sticky assignment)** — faqat
     `type=waiter` chaqiruvlarga tegishli, `type=bill` hech qachon bunga
     aralashmaydi va doim guruhga to'liq broadcast + tugma bilan ketadi:
@@ -164,26 +174,55 @@ avtomatik aniqlanadi va yaratiladi.
     `canTransitionTo()`dan farqli, oshxonaning "tayyor" signali
     `pending`/`confirmed`/`preparing`dan to'g'ridan-to'g'ri `ready`ga
     "sakraydi" — allaqachon `ready`/`served`/`paid`/`cancelled` bo'lsa
-    hech narsa qilmaydi; `call_done` esa oddiy `canTransitionTo('resolved')`
-    orqali), so'ng `editMessageText` bilan asl xabarni tahrirlaydi
-    (tugmani olib tashlab, "✅ Bajarildi" deb belgilaydi — `message_id`/
-    `chat.id` alohida saqlanmaydi, ular har safar Telegramning o'zi
-    yuborgan `callback_query.message`dan olinadi). `order_ready` uchun
-    qo'shimcha ravishda `waiter_chat_id`ga "Stol {code} buyurtmasi
-    tayyor — olib boring" xabari yuboriladi. Xavfsizlik:
+    hech narsa qilmaydi; `call_done` esa `DB::transaction()` +
+    `lockForUpdate()` ichida `canTransitionTo('resolved')` orqali —
+    lock shart, aks holda ikkita deyarli bir vaqtdagi so'rov (masalan
+    Telegram webhook qayta urinishi yoki ikki kishi tugmani bir onda
+    bosishi) ikkalasi ham hali `pending` holatni o'qib, ikkalasi ham
+    stolni turli xodimlarga "biriktirib qo'yishi" mumkin edi — lock
+    ikkinchisini birinchisi commit bo'lguncha kutishga majburlaydi, u
+    holda `canTransitionTo` allaqachon `false` qaytaradi), so'ng
+    `editMessageText` bilan asl xabarni tahrirlaydi — `call_done` uchun
+    oxiriga tugmani bosgan kishining ismi bilan "✅ {handled_by_name}
+    bordi" qo'shiladi (masalan "✅ @aziz_waiter bordi", username yo'q
+    bo'lsa first_name), `order_ready` uchun oddiy "✅ Bajarildi".
+    **Muhim**: tugmaning o'zini olib tashlash uchun `reply_markup`
+    umuman yubormaslik YETARLI EMAS — Telegram buni "hozirgi
+    klaviaturani o'zgartirma" deb tushunadi va eski tugma qolib
+    ketadi; buning o'rniga aniq bo'sh qiymat
+    (`{"inline_keyboard":[]}`) yuborilishi shart, `markDone()` shuni
+    qiladi (`message_id`/`chat.id` alohida saqlanmaydi, ular har safar
+    Telegramning o'zi yuborgan `callback_query.message`dan olinadi).
+    `order_ready` uchun qo'shimcha ravishda `waiter_chat_id`ga "✅ Stol
+    {code} buyurtmasi tayyor — olib boring" xabari yuboriladi. Xavfsizlik:
     `X-Telegram-Bot-Api-Secret-Token` header `config('services.telegram.webhook_secret')`
     (`.env`dagi `TELEGRAM_WEBHOOK_SECRET`) bilan `hash_equals()` orqali
     solishtiriladi — mos kelmasa yoki sozlanmagan bo'lsa 403.
     `callback_query`siz kelgan boshqa update turlari (masalan oddiy xabar)
     xatosiz `{"ok":true}` bilan e'tiborsiz qoldiriladi (Telegram qayta
     urinishining oldini olish uchun).
-  - Webhook'ni botga biriktirish (haqiqiy HTTPS manzil tayyor bo'lgach,
-    qo'lda ishga tushiriladi):
+  - **Webhook'ni botga biriktirish** — bu qadam qo'lda bajarilishi
+    SHART, aks holda `order_ready`/`call_done` tugmalari bosilganda
+    Telegram callback'ni HECH QAYERGA yubormaydi (chunki o'zi qayerga
+    yuborishni bilmaydi) — tugmalar jim ishlamay qoladi, hech qanday
+    xatolik ham ko'rinmaydi. Tekshirish uchun:
+    ```
+    curl "https://api.telegram.org/bot<BOT_TOKEN>/getWebhookInfo"
+    ```
+    Javobdagi `url` maydoni joriy domenga mos kelishi shart (bo'sh
+    bo'lsa yoki eski/boshqa domen ko'rsatsa — shu sabab). Sozlash:
     ```
     curl -X POST "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook" \
-      -d "url=https://<domain>/api/telegram/webhook" \
+      -d "url=https://<domen>/api/telegram/webhook" \
       -d "secret_token=<.env dagi TELEGRAM_WEBHOOK_SECRET qiymati>"
     ```
+    **Deploy checklist — bu qadam har safar domen/tunnel manzili
+    o'zgarganda TAKRORLANISHI kerak** (vaqtinchalik Cloudflare tunnel
+    har qayta ishga tushirilganda yangi manzil beradi): serverni qayta
+    ko'targanda ☰ Menu tugmasi (`setChatMenuButton`) yangilansa ham,
+    webhook alohida, mustaqil sozlama — u avtomatik yangilanmaydi va
+    unutilishi oson (aynan shu sabab bilan bir marta butunlay
+    ro'yxatdan o'tkazilmagan holda qolib ketgan edi).
 - `app/Services/StaffAuth.php` — **olib tashlangan** (telefon+PIN tizimi
   bilan birga). Xodimni aniqlash endi to'g'ridan-to'g'ri
   `StaffAuthMiddleware` ichida, mijoznikiga o'xshash `TelegramAuth::validate()`
@@ -326,7 +365,7 @@ avtomatik aniqlanadi va yaratiladi.
   yozmang**, faqat `.env`da saqlanadi.
 - Testlar: `tests/Feature/{SessionInitTest,ReviewTest,WaiterCallTest,
   OrderTest,AdminPanelTest,MenuTest,StaffAuthTest,TelegramWebhookTest}.php`
-  — `php artisan test` bilan barchasi o'tadi (63 test, 162 assertion).
+  — `php artisan test` bilan barchasi o'tadi (70 test, 201 assertion).
   Barcha xodim testlari endi `TelegramAuth::sign()` bilan imzolangan
   `X-Telegram-Init-Data` header ishlatadi (`/api/staff/login` yo'q).
   `MenuTest` demo rejimni ham qamrab oladi: `start_param`siz `demo: true`
@@ -345,7 +384,13 @@ avtomatik aniqlanadi va yaratiladi.
   keyingi chaqiruv tugmasiz eslatma bilan va yozuv darhol `resolved`
   yaratilishi, yangi buyurtmadan keyin biriktirish tozalanib keyingi
   chaqiruv yana broadcast bo'lishi, `bill` chaqiruvi biriktirishdan
-  qat'i nazar doim broadcast+tugma bilan ketishi) qamrab oladi;
+  qat'i nazar doim broadcast+tugma bilan ketishi, bitta xodim ikkita
+  turli stolga mustaqil biriktirilishi mumkinligi, `waiter_chat_id`
+  sozlanmagan bo'lsa eslatma (reminder) yo'lida ham Telegram'ga
+  so'rov yuborilmasligi, 3 xil (toza) stolda ketma-ket chaqiruvlar
+  bir-biriga umuman ta'sir qilmasligi, va `bill` chaqiruvi
+  biriktirilgan ofitsiantni xabarda tilga olishi (`assigned_waiter_*`ni
+  o'zi o'zgartirmagan holda)) qamrab oladi;
   `TelegramWebhookTest` — noto'g'ri/yo'q `secret_token` 403,
   `callback_query`siz update xatosiz o'tkazib yuborilishi,
   `order_ready`/`call_done` statusni to'g'ri yangilashi va xabarni
@@ -353,7 +398,14 @@ avtomatik aniqlanadi va yaratiladi.
   idempotent no-op, `call_done` bosgan kishining ma'lumotidan
   `assigned_waiter_*`/`handled_by_*`ni to'g'ri to'ldirishi (username
   bo'lsa `@username`, bo'lmasa `first_name`) va `bill` chaqiruviga
-  bunday biriktirish qilmasligi; `AdminPanelTest`
+  bunday biriktirish qilmasligi, ikkita turli stolga `call_done`
+  kelganda ularning biriktirishi aralashmasligi, va bitta xodimning
+  eski chaqiruvdagi `handled_by_name` momentli surati o'sha xodim
+  boshqa (keyingi) chaqiruvda boshqa username bilan kelsa ham
+  o'zgarmasligi (snapshot, live emas), va tahrirlangan xabar matnida
+  bosgan kishining nomi ("✅ @username bordi" / "✅ First_name bordi")
+  hamda tugmani chindan olib tashlaydigan bo'sh
+  `{"inline_keyboard":[]}` yuborilishi; `AdminPanelTest`
   — faqat admin ruxsati, restoranlararo izolyatsiya, statistika
   to'g'riligi; `StaffAuthTest` — ro'yxatdan o'tgan/o'tmagan/faol
   bo'lmagan `telegram_id`ning `GET /api/staff/me`ga ta'siri.

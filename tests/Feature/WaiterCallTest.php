@@ -381,7 +381,7 @@ class WaiterCallTest extends TestCase
         });
     }
 
-    public function test_a_bill_request_always_broadcasts_with_a_button_regardless_of_assigned_waiter(): void
+    public function test_a_bill_request_always_broadcasts_with_a_button_and_mentions_the_assigned_waiter(): void
     {
         Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]])]);
 
@@ -400,12 +400,97 @@ class WaiterCallTest extends TestCase
         $response->assertStatus(201);
         $response->assertJsonPath('waiter_call.status', WaiterCall::STATUS_PENDING);
 
+        // The assignment mechanism itself must be unaffected by a bill call.
+        $this->assertSame(555000111, $this->table->fresh()->assigned_waiter_telegram_id);
+        $this->assertSame('@aziz_waiter', $this->table->fresh()->assigned_waiter_name);
+
         Http::assertSent(function ($request) {
             $body = urldecode($request->body());
 
             return str_contains($request->url(), '/sendMessage')
-                && str_contains($body, "Hisob so'raldi")
+                && str_contains($body, "@aziz_waiter, siz xizmat ko'rsatgan Stol 1 hisob so'ramoqda")
                 && str_contains($body, 'call_done:');
         });
+    }
+
+    public function test_the_same_waiter_can_be_independently_assigned_to_two_different_tables(): void
+    {
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]])]);
+
+        $this->restaurant->update(['waiter_chat_id' => -100888]);
+
+        $otherTable = RestaurantTable::create([
+            'restaurant_id' => $this->restaurant->id,
+            'code' => '6',
+            'name' => 'Stol 6',
+            'is_active' => true,
+        ]);
+
+        $this->table->update(['assigned_waiter_telegram_id' => 555000111, 'assigned_waiter_name' => '@aziz_waiter']);
+        $otherTable->update(['assigned_waiter_telegram_id' => 555000111, 'assigned_waiter_name' => '@aziz_waiter']);
+
+        $response1 = $this->postJson(
+            '/api/waiter-calls',
+            ['type' => 'waiter'],
+            $this->customerHeaderFor(111222333, 'r'.$this->restaurant->id.'_t1'),
+        );
+        $response2 = $this->postJson(
+            '/api/waiter-calls',
+            ['type' => 'waiter'],
+            $this->customerHeaderFor(444555666, 'r'.$this->restaurant->id.'_t6'),
+        );
+
+        $response1->assertStatus(201)->assertJsonPath('waiter_call.status', WaiterCall::STATUS_RESOLVED);
+        $response2->assertStatus(201)->assertJsonPath('waiter_call.status', WaiterCall::STATUS_RESOLVED);
+        $this->assertSame(555000111, $response1->json('waiter_call.handled_by_telegram_id'));
+        $this->assertSame(555000111, $response2->json('waiter_call.handled_by_telegram_id'));
+
+        $this->assertDatabaseHas('waiter_calls', ['id' => $response1->json('waiter_call.id'), 'restaurant_table_id' => $this->table->id]);
+        $this->assertDatabaseHas('waiter_calls', ['id' => $response2->json('waiter_call.id'), 'restaurant_table_id' => $otherTable->id]);
+        $this->assertDatabaseCount('waiter_calls', 2);
+    }
+
+    public function test_a_reminder_call_to_an_assigned_table_does_not_call_telegram_when_waiter_chat_id_is_not_set(): void
+    {
+        Http::fake();
+
+        $this->table->update(['assigned_waiter_telegram_id' => 555000111, 'assigned_waiter_name' => '@aziz_waiter']);
+
+        $response = $this->postJson(
+            '/api/waiter-calls',
+            ['type' => 'waiter'],
+            $this->customerHeaderFor(111222333, 'r'.$this->restaurant->id.'_t1'),
+        );
+
+        $response->assertStatus(201);
+        $response->assertJsonPath('waiter_call.status', WaiterCall::STATUS_RESOLVED);
+        $this->assertSame(555000111, $response->json('waiter_call.handled_by_telegram_id'));
+        $this->assertSame('@aziz_waiter', $response->json('waiter_call.handled_by_name'));
+        $this->assertDatabaseCount('waiter_calls', 1);
+        Http::assertNothingSent();
+    }
+
+    public function test_calling_a_waiter_on_three_different_fresh_tables_never_blocks_on_each_other(): void
+    {
+        Http::fake();
+
+        $tableB = RestaurantTable::create(['restaurant_id' => $this->restaurant->id, 'code' => '2', 'name' => 'Stol 2', 'is_active' => true]);
+        $tableC = RestaurantTable::create(['restaurant_id' => $this->restaurant->id, 'code' => '3', 'name' => 'Stol 3', 'is_active' => true]);
+
+        $responses = [
+            $this->postJson('/api/waiter-calls', ['type' => 'waiter'], $this->customerHeaderFor(111222331, 'r'.$this->restaurant->id.'_t1')),
+            $this->postJson('/api/waiter-calls', ['type' => 'waiter'], $this->customerHeaderFor(111222332, 'r'.$this->restaurant->id.'_t2')),
+            $this->postJson('/api/waiter-calls', ['type' => 'waiter'], $this->customerHeaderFor(111222333, 'r'.$this->restaurant->id.'_t3')),
+        ];
+
+        foreach ($responses as $response) {
+            $response->assertStatus(201);
+            $response->assertJsonPath('waiter_call.status', WaiterCall::STATUS_PENDING);
+        }
+
+        $this->assertDatabaseCount('waiter_calls', 3);
+        $this->assertDatabaseHas('waiter_calls', ['restaurant_table_id' => $this->table->id, 'status' => WaiterCall::STATUS_PENDING]);
+        $this->assertDatabaseHas('waiter_calls', ['restaurant_table_id' => $tableB->id, 'status' => WaiterCall::STATUS_PENDING]);
+        $this->assertDatabaseHas('waiter_calls', ['restaurant_table_id' => $tableC->id, 'status' => WaiterCall::STATUS_PENDING]);
     }
 }

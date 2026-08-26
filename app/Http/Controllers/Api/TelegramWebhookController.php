@@ -8,6 +8,8 @@ use App\Models\WaiterCall;
 use App\Services\TelegramNotifier;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class TelegramWebhookController extends Controller
 {
@@ -76,13 +78,17 @@ class TelegramWebhookController extends Controller
             $order->update(['status' => Order::STATUS_READY]);
         }
 
-        $this->markDone($chatId, $messageId, $originalText);
+        $this->markDone($chatId, $messageId, $originalText, '✅ Bajarildi');
 
         if ($order->table && $order->restaurant?->waiter_chat_id) {
-            $this->telegramNotifier->sendMessage(
-                $order->restaurant->waiter_chat_id,
-                "Stol {$order->table->code} buyurtmasi tayyor — olib boring.",
-            );
+            try {
+                $this->telegramNotifier->sendMessage(
+                    $order->restaurant->waiter_chat_id,
+                    "✅ Stol {$order->table->code} buyurtmasi tayyor — olib boring.",
+                );
+            } catch (\Throwable $e) {
+                Log::warning('telegram.order_ready_notify_failed', ['order_id' => $order->id, 'error' => $e->getMessage()]);
+            }
         }
     }
 
@@ -93,39 +99,62 @@ class TelegramWebhookController extends Controller
      */
     private function handleCallDone(int $callId, int|string $chatId, int $messageId, string $originalText, array $from): void
     {
-        $call = WaiterCall::with('table')->find($callId);
+        // lockForUpdate() inside a transaction so two near-simultaneous
+        // deliveries of the same callback (a Telegram webhook retry, or two
+        // people tapping the button at once) can't both pass
+        // canTransitionTo() before either write commits — the second
+        // waiter blocks until the first transaction commits, then re-reads
+        // the now-`resolved` status and no-ops instead of double-assigning
+        // the table.
+        $handlerName = null;
 
-        if (! $call || ! $call->canTransitionTo(WaiterCall::STATUS_RESOLVED)) {
-            return;
-        }
+        $resolved = DB::transaction(function () use ($callId, $from, &$handlerName) {
+            $call = WaiterCall::with('table')->lockForUpdate()->find($callId);
 
-        $handlerTelegramId = $from['id'] ?? null;
-        $handlerName = ! empty($from['username'])
-            ? '@'.$from['username']
-            : ($from['first_name'] ?? null);
+            if (! $call || ! $call->canTransitionTo(WaiterCall::STATUS_RESOLVED)) {
+                return false;
+            }
 
-        $call->update([
-            'status' => WaiterCall::STATUS_RESOLVED,
-            'handled_by_telegram_id' => $handlerTelegramId,
-            'handled_by_name' => $handlerName,
-        ]);
+            $handlerTelegramId = $from['id'] ?? null;
+            $handlerName = ! empty($from['username'])
+                ? '@'.$from['username']
+                : ($from['first_name'] ?? null);
 
-        // Only a resolved "waiter" call assigns the table — "bill" calls
-        // never touch table assignment (see CLAUDE.md).
-        if ($call->type === WaiterCall::TYPE_WAITER && $call->table && $handlerTelegramId !== null) {
-            $call->table->update([
-                'assigned_waiter_telegram_id' => $handlerTelegramId,
-                'assigned_waiter_name' => $handlerName,
+            $call->update([
+                'status' => WaiterCall::STATUS_RESOLVED,
+                'handled_by_telegram_id' => $handlerTelegramId,
+                'handled_by_name' => $handlerName,
             ]);
-        }
 
-        $this->markDone($chatId, $messageId, $originalText);
+            // Only a resolved "waiter" call assigns the table — "bill"
+            // calls never touch table assignment (see CLAUDE.md).
+            if ($call->type === WaiterCall::TYPE_WAITER && $call->table && $handlerTelegramId !== null) {
+                $call->table->update([
+                    'assigned_waiter_telegram_id' => $handlerTelegramId,
+                    'assigned_waiter_name' => $handlerName,
+                ]);
+            }
+
+            return true;
+        });
+
+        if ($resolved) {
+            $this->markDone($chatId, $messageId, $originalText, $handlerName ? "✅ {$handlerName} bordi" : '✅ Bajarildi');
+        }
     }
 
-    private function markDone(int|string $chatId, int $messageId, string $originalText): void
+    private function markDone(int|string $chatId, int $messageId, string $originalText, string $suffix): void
     {
-        $text = trim($originalText) !== '' ? $originalText."\n\n✅ Bajarildi" : '✅ Bajarildi';
+        $text = trim($originalText) !== '' ? $originalText."\n\n{$suffix}" : $suffix;
 
-        $this->telegramNotifier->editMessageText($chatId, $messageId, $text);
+        try {
+            // `reply_markup` must be sent as an explicit empty keyboard, not
+            // omitted — Telegram's editMessageText leaves the existing
+            // inline keyboard untouched when the field is absent, it only
+            // clears it when given `{"inline_keyboard":[]}`.
+            $this->telegramNotifier->editMessageText($chatId, $messageId, $text, ['inline_keyboard' => []]);
+        } catch (\Throwable $e) {
+            Log::warning('telegram.edit_message_failed', ['chat_id' => $chatId, 'message_id' => $messageId, 'error' => $e->getMessage()]);
+        }
     }
 }
