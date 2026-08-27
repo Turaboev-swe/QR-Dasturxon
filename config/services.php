@@ -37,6 +37,10 @@ return [
 
     'telegram' => [
         'bot_token' => env('TELEGRAM_BOT_TOKEN'),
+        // Public (already printed on every table's QR code / in CLAUDE.md) —
+        // unlike bot_token/webhook_secret, safe to default here.
+        'bot_username' => env('TELEGRAM_BOT_USERNAME', 'qr_dasturxon_bot'),
+        'miniapp_short_name' => env('TELEGRAM_MINIAPP_SHORT_NAME', 'qrmenu'),
         'kitchen_chat_id' => env('TELEGRAM_KITCHEN_CHAT_ID'),
         'waiter_chat_id' => env('TELEGRAM_WAITER_CHAT_ID'),
         'webhook_secret' => env('TELEGRAM_WEBHOOK_SECRET'),

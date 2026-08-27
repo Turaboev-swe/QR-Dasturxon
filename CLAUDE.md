@@ -387,8 +387,9 @@ avtomatik aniqlanadi va yaratiladi.
   `TELEGRAM_WEBHOOK_SECRET` bor — **haqiqiy qiymatlarini bu faylga
   yozmang**, faqat `.env`da saqlanadi.
 - Testlar: `tests/Feature/{SessionInitTest,ReviewTest,WaiterCallTest,
-  OrderTest,AdminPanelTest,MenuTest,StaffAuthTest,TelegramWebhookTest}.php`
-  — `php artisan test` bilan barchasi o'tadi (73 test, 210 assertion).
+  OrderTest,AdminPanelTest,MenuTest,StaffAuthTest,TelegramWebhookTest,
+  QrBridgeTest}.php`
+  — `php artisan test` bilan barchasi o'tadi (76 test, 215 assertion).
   Barcha xodim testlari endi `TelegramAuth::sign()` bilan imzolangan
   `X-Telegram-Init-Data` header ishlatadi (`/api/staff/login` yo'q).
   `ReviewTest` sharh buyurtmasiz ham yaratilishini, `order_id` berilmasa
@@ -436,6 +437,50 @@ avtomatik aniqlanadi va yaratiladi.
   — faqat admin ruxsati, restoranlararo izolyatsiya, statistika
   to'g'riligi; `StaffAuthTest` — ro'yxatdan o'tgan/o'tmagan/faol
   bo'lmagan `telegram_id`ning `GET /api/staff/me`ga ta'siri.
+- **QR "bridge" (ko'prik) manzili** — `routes/web.php`dagi
+  `GET /t/{startParam}` (regex `r\d+_t.+` bilan cheklangan, mos kelmasa
+  404) `config('services.telegram.bot_username')`/
+  `config('services.telegram.miniapp_short_name')` (`TELEGRAM_BOT_USERNAME`/
+  `TELEGRAM_MINIAPP_SHORT_NAME` env, standart qiymatlar
+  `qr_dasturxon_bot`/`qrmenu` — bular sirli emas, allaqachon har bir
+  bosilgan QR kodda ochiq ko'rinadi) asosida haqiqiy
+  `https://t.me/<bot>/<app>?startapp={startParam}` manziliga 302 bilan
+  yo'naltiradi. `startapp` qiymatining o'zi bu yerda TEKSHIRILMAYDI —
+  bu shunchaki yo'naltiruvchi ko'prik, haqiqiy tekshiruv keyinroq Mini
+  App ichida `TableResolver` orqali bo'ladi. Sabab: bosib chiqarilgan
+  QR kodlar endi `t.me` havolasini to'g'ridan-to'g'ri emas, balki shu
+  bridge manzilini kodlaydi — ba'zi uchinchi tomon QR skaner ilovalar
+  `t.me://` deep link'ni Telegram'ga uzata olmaydi (faqat telefonning
+  o'z kamerasi buni ishonchli qiladi), oddiy `https://` havolani esa
+  har qanday skaner ochadi. `tests/Feature/QrBridgeTest.php` buni
+  qamrab oladi.
+- **Stol QR kodlarini generatsiya qilish** (bosib chiqarish uchun) —
+  ikkita mustaqil vosita, ikkalasi ham yuqoridagi bridge manzilini
+  kodlaydi (`https://{APP_URL}/t/r{restaurant_id}_t{table_code}`):
+  - `qr-generator.html` (loyiha ildizida) — brauzerda ochiladigan,
+    o'z-o'zini qamrab oluvchi (vendor qilingan MIT `qrcode-generator`
+    JS kutubxonasi bilan) vosita: sayt manzili (APP_URL)/bot
+    username/app qisqartmasi/restoran ID/stollar sonini kiritib,
+    barcha stollar uchun bir zumda QR kod to'plami yasaydi va
+    "🖨️ Chop etish / PDF saqlash" tugmasi (`@media print`, A4) orqali
+    bosib chiqaradi.
+  - `generate_qrs.py` (loyiha ildizida, `pip install "qrcode[pil]"`
+    talab qiladi) — buyruq qatoridan PNG (yuqori piksel zichlikda) +
+    SVG (vektor) juftligini `qr_codes/`ga yozadi (`ThreadPoolExecutor`
+    bilan parallel).
+  - Ikkalasi ham QR kod ostiga "Faqat telefon kamerasi orqali
+    skanerlang — boshqa skaner ilovalar ishlamasligi mumkin"
+    ogohlantirishini qo'shadi. Buni tahrirlash/tarjima qilish kerak
+    bo'lsa: `qr-generator.html`da `.qr-camera-warn` elementi (matni
+    JS'dagi `generate()` funksiyasi ichida), `generate_qrs.py`da
+    `WARNING_TEXT` konstantasi (PNG rasmning pastki qismiga PIL bilan
+    chiziladi — QR kodning o'zini yopmaydi; SVG chiqishi dizayn/
+    bosmaxona uchun matnsiz sof vektor QR bo'lib qoladi).
+  - **Diqqat**: loyiha ildizidagi `qr_codes/` papkasi hozircha ESKI
+    (bridge'dan oldingi — `t.me` havolasini to'g'ridan-to'g'ri
+    kodlagan, ogohlantirish matnisiz) fayllarni saqlaydi — real bosib
+    chiqarishdan oldin `python3 generate_qrs.py`ni qayta ishga
+    tushirib, ularni yangilash SHART.
 - Haqiqiy Telegram botida (`@qr_dasturxon_bot`) Cloudflare quick tunnel
   orqali sinovdan o'tkazilgan: BotFather'da nomlangan Mini App
   (short name orqali, masalan `qrmenu`) yaratilib, shu havola ishlatiladi:

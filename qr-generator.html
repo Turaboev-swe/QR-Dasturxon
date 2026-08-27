@@ -14,6 +14,7 @@
         --maroon-deep: #4E1620;
         --gold: #C79A3E;
         --teal: #1F6F6A;
+        --ink-soft: #8a7a66;
         --radius: 18px;
         --shadow: 0 10px 30px rgba(46,27,18,.16);
     }
@@ -94,7 +95,8 @@
         border-radius: 999px;
         margin: 8px 0 10px;
     }
-    .qr-scan-hint { font-size: 11px; color: #8a7a66; margin-bottom: 6px; }
+    .qr-scan-hint { font-size: 11px; color: var(--ink-soft); margin-bottom: 6px; }
+    .qr-camera-warn { font-family: 'Manrope', Arial, sans-serif; font-size: 9.5px; color: var(--ink-soft); text-align: center; margin-top: 4px; line-height: 1.4; }
     .qr-url { font-size: 9px; color: #b0a58f; word-break: break-all; padding-top: 4px; border-top: 1px dashed #e9dcc3; margin-top: 8px; }
 
     @media print {
@@ -121,13 +123,23 @@
     <div class="toolbar no-print">
         <h1>QR Dasturxon — Stol QR kodlari</h1>
         <p class="hint">
-            Har bir QR kod Telegram botning nomlangan Mini App havolasiga ishora qiladi:
-            <code>https://t.me/&lt;BOT_USERNAME&gt;/&lt;APP_NAME&gt;?startapp=r&lt;RESTORAN_ID&gt;_t&lt;STOL&gt;</code>.
-            Format <code>TableResolver</code> kutgan <code>r{restaurant_id}_t{table_code}</code>
-            ko'rinishiga aynan mos kelishi shart — aks holda skanerlaganda
+            Har bir QR kod endi Telegramning <code>t.me</code> havolasini
+            TO'G'RIDAN-TO'G'RI emas, balki o'z serverimizdagi "bridge"
+            (ko'prik) manzilini kodlaydi:
+            <code>https://&lt;APP_URL&gt;/t/r&lt;RESTORAN_ID&gt;_t&lt;STOL&gt;</code>
+            — bu oddiy <code>https://</code> havola bo'lgani uchun har qanday
+            skaner ilova uni ochadi, so'ng u avtomatik
+            <code>https://t.me/&lt;BOT_USERNAME&gt;/&lt;APP_NAME&gt;?startapp=...</code>
+            manziliga yo'naltiradi (server tomondagi route: <code>routes/web.php</code>
+            → <code>GET /t/{startParam}</code>). Format <code>TableResolver</code>
+            kutgan <code>r{restaurant_id}_t{table_code}</code> ko'rinishiga aynan
+            mos kelishi shart — aks holda skanerlaganda
             "QR sessiya parametri noto'g'ri" xatoligi chiqadi.
         </p>
         <div class="config-row">
+            <label>Sayt manzili (APP_URL)
+                <input id="cfg-appurl" value="https://qr-dasturxon.uz">
+            </label>
             <label>Bot username
                 <input id="cfg-bot" value="qr_dasturxon_bot">
             </label>
@@ -2454,12 +2466,24 @@ var qrcode = function() {
         // TableResolver expects exactly `r{restaurant_id}_t{table_code}` —
         // see app/Services/TableResolver.php. Any other shape (e.g. a bare
         // `table_5`) fails QR-session resolution with a 422.
-        function buildUrl(botUsername, appName, restaurantId, tableNumber) {
-            var startParam = 'r' + restaurantId + '_t' + tableNumber;
+        function buildStartParam(restaurantId, tableNumber) {
+            return 'r' + restaurantId + '_t' + tableNumber;
+        }
+
+        // The QR code encodes our own https:// "bridge" URL (routes/web.php,
+        // GET /t/{startParam}), not the t.me link directly — some third-party
+        // QR scanner apps won't hand a t.me:// deep link off to Telegram, but
+        // every scanner opens a plain https:// URL, which then redirects on.
+        function buildBridgeUrl(appUrl, startParam) {
+            return appUrl.replace(/\/+$/, '') + '/t/' + startParam;
+        }
+
+        function buildTelegramUrl(botUsername, appName, startParam) {
             return 'https://t.me/' + botUsername + '/' + appName + '?startapp=' + startParam;
         }
 
         function generate() {
+            var appUrl = el('cfg-appurl').value.trim();
             var botUsername = el('cfg-bot').value.trim();
             var appName = el('cfg-app').value.trim();
             var restaurantId = el('cfg-restaurant').value.trim();
@@ -2469,7 +2493,9 @@ var qrcode = function() {
             grid.innerHTML = '';
 
             for (var i = 1; i <= count; i++) {
-                var url = buildUrl(botUsername, appName, restaurantId, i);
+                var startParam = buildStartParam(restaurantId, i);
+                var url = buildBridgeUrl(appUrl, startParam);
+                var telegramUrl = buildTelegramUrl(botUsername, appName, startParam);
 
                 var qr = qrcode(0, 'M');
                 qr.addData(url);
@@ -2482,7 +2508,8 @@ var qrcode = function() {
                     '<div class="qr-table-name">Stol ' + i + '</div>' +
                     '<div class="qr-brand">QR Dasturxon</div>' +
                     '<div class="qr-scan-hint">Menyuni ko\'rish uchun skanering qiling</div>' +
-                    '<div class="qr-url no-print">' + url + '</div>';
+                    '<div class="qr-camera-warn">Faqat telefon kamerasi orqali skanerlang — boshqa skaner ilovalar ishlamasligi mumkin</div>' +
+                    '<div class="qr-url no-print">' + url + ' &rarr; ' + telegramUrl + '</div>';
                 grid.appendChild(card);
             }
         }
