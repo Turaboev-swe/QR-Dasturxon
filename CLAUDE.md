@@ -66,8 +66,10 @@ avtomatik aniqlanadi va yaratiladi.
   to'lov doim oxirida ofitsiantga to'g'ridan-to'g'ri qilinadi;
   `payment_status`ni hozircha hech qayerda hech kim `paid`ga
   o'zgartirmaydi — bu alohida, keyingi vazifa), `order_items`, `reviews`
-  (+ `order_id` unique), `waiter_calls` (+ `type`: `waiter`/`bill`, +
-  `handled_by_telegram_id`/`handled_by_name`), `payments`, `chefs`
+  (+ `order_id` unique **nullable** — sharh buyurtmasiz ham qoldirilishi
+  mumkin, quyidagi ReviewController bo'limiga qarang), `waiter_calls`
+  (+ `type`: `waiter`/`bill`, + `handled_by_telegram_id`/
+  `handled_by_name`), `payments`, `chefs`
   (restoran oshpazi: `title`, `experience_years`,
   `specialty`, `tier_badge`, `photo_path`).
 - Modellar: `app/Models/*`. `App\Models\Concerns\HasTranslations::translate()`
@@ -133,6 +135,15 @@ avtomatik aniqlanadi va yaratiladi.
     yakunlangan) tashrifidan hali "unpaid" buyurtmalarga ega bo'lsa,
     ular ham hisobga qo'shiladi — bu keyingi "hisobni yopish" vazifasi
     qo'shilgach avtomatik tuzaladi.
+  - **Frontend**: `POST /api/waiter-calls` (`type=bill`) muvaffaqiyatli
+    bo'lgach `customer.js` avtomatik "Rahmat!" xayrlashuv oynasini
+    ochadi — ichida ixtiyoriy 1-5 yulduz+izoh (mavjud sharh formasi
+    bilan bir xil, `POST /api/reviews`ga to'g'ridan-to'g'ri, buyurtma
+    tanlashsiz yuboriladi) va "O'tkazib yuborish" tugmasi bor. Bu oyna
+    hech narsani TO'SMAYDI — yopilgach yoki o'tkazib yuborilgach mijoz
+    ilovada istalgan amalni (masalan yana ofitsiant chaqirish) davom
+    ettira oladi; alohida "buyurtmani yakunlash" tugmasi yo'q, buni
+    "🧾 Hisob" allaqachon anglatadi.
   - **Stolga ofitsiant "yopishib qolishi" (sticky assignment)** — faqat
     `type=waiter` chaqiruvlarga tegishli, `type=bill` hech qachon bunga
     aralashmaydi va doim guruhga to'liq broadcast + tugma bilan ketadi:
@@ -237,8 +248,13 @@ avtomatik aniqlanadi va yaratiladi.
   (`GET/POST /orders`, `GET /orders/{id}`, xodim uchun `GET /staff/orders`
   va `PATCH /staff/orders/{id}/status` — `store()` muvaffaqiyatli
   bo'lgach kitchen-chatga xabar yuboradi, yuqoriga qarang),
-  `ReviewController` (`GET/POST /reviews` — faqat `served`/`paid`
-  buyurtmaga, bitta buyurtmaga bitta sharh), `WaiterCallController`
+  `ReviewController` (`GET/POST /reviews` — **buyurtma talab qilmaydi**,
+  faqat `start_param` orqali resolved restoranga; `order_id` ixtiyoriy —
+  berilsa (mijozning o'zinikimi, `served`/`paid`mi, hali sharhlanmaganmi
+  tekshiriladi) sharh o'sha buyurtmaga bog'lanadi va "tasdiqlangan"
+  hisoblanadi, berilmasa ham sharh oddiy yaratiladi, bitta buyurtmaga
+  bitta sharh cheklovi faqat bog'langan holatga tegishli),
+  `WaiterCallController`
   (`GET/POST /waiter-calls` — `type: waiter|bill`, xodim uchun
   `GET /staff/waiter-calls` va `PATCH /staff/waiter-calls/{id}/status` —
   bir stolga bir vaqtda har bir `type` uchun faqat bitta ochiq chaqiruv,
@@ -298,9 +314,15 @@ avtomatik aniqlanadi va yaratiladi.
     faqat `taste_*` maydonlari to'ldirilgan bo'lsa); "🔔 Ofitsiant" va
     "🧾 Hisob" alohida `POST /api/waiter-calls` (`type` bilan) chaqiradi;
     SOS tugmasi — statik favqulodda raqamlar modali (102/103/1178),
-    backendga bog'liq emas; sharh qoldirish — mijozning o'zining
-    `served`/`paid` va hali sharhlanmagan buyurtmalaridan birini tanlab,
-    1-5 yulduz bilan; checkout ekranida to'lov usuli tanlovi **yo'q** —
+    backendga bog'liq emas; sharh qoldirish ("Sharh qoldirish" tugmasi
+    hamda "🧾 Hisob" muvaffaqiyatli bo'lgach avtomatik ochiladigan
+    "Rahmat!" xayrlashuv oynasi ichida) — **buyurtma talab qilinmaydi**,
+    forma har doim ochiq; agar mijozning `served`/`paid` va hali
+    sharhlanmagan buyurtmasi bo'lsa, ixtiyoriy tanlov (`<select>`)
+    ko'rsatiladi (tanlansa sharh o'sha buyurtmaga bog'lanadi va
+    "✓ Tasdiqlangan mehmon" belgisi bilan chiqadi), bo'lmasa forma
+    picker'siz, faqat yulduz+izoh bilan ko'rinadi; checkout ekranida
+    to'lov usuli tanlovi **yo'q** —
     mijoz to'lovni tanlamaydi, to'lov doim oxirida ofitsiantga
     to'g'ridan-to'g'ri qilinadi. `POST /api/session`
     (`start_param`ni talab qiladi) muvaffaqiyatsiz bo'lsa —
@@ -337,7 +359,8 @@ avtomatik aniqlanadi va yaratiladi.
   `restaurant.rating`/`reviews_count` (haqiqiy `reviews` jadvalidan
   `loadCount`/`loadAvg` bilan hisoblanadi, sharh bo'lmasa `rating: null`),
   `restaurant.chef`, `restaurant.recent_reviews` (oxirgi 6 ta izohli
-  sharh, faqat ism+baho+izoh — PII yo'q), har bir taomda `allergens`,
+  sharh, ism+baho+izoh+`verified` — `order_id !== null`, PII yo'q), har
+  bir taomda `allergens`,
   `discount` (faol bo'lsa) va `taste` (to'ldirilgan bo'lsa).
 - `php artisan telegram:fake-init-data [--start-param=r1_t1]` — imzolangan
   fake initData va tayyor curl misolini chiqaradi (dev/test uchun).
@@ -365,10 +388,14 @@ avtomatik aniqlanadi va yaratiladi.
   yozmang**, faqat `.env`da saqlanadi.
 - Testlar: `tests/Feature/{SessionInitTest,ReviewTest,WaiterCallTest,
   OrderTest,AdminPanelTest,MenuTest,StaffAuthTest,TelegramWebhookTest}.php`
-  — `php artisan test` bilan barchasi o'tadi (70 test, 201 assertion).
+  — `php artisan test` bilan barchasi o'tadi (73 test, 210 assertion).
   Barcha xodim testlari endi `TelegramAuth::sign()` bilan imzolangan
   `X-Telegram-Init-Data` header ishlatadi (`/api/staff/login` yo'q).
-  `MenuTest` demo rejimni ham qamrab oladi: `start_param`siz `demo: true`
+  `ReviewTest` sharh buyurtmasiz ham yaratilishini, `order_id` berilmasa
+  ham 201 qaytishini, `start_param`siz hamon 422 qaytarilishini va
+  `GET /api/menu`da `recent_reviews.*.verified` faqat buyurtmaga
+  bog'langan sharhlarda `true` bo'lishini qamrab oladi. `MenuTest` demo
+  rejimni ham qamrab oladi: `start_param`siz `demo: true`
   va faol restoran menyusi qaytishi, faol restoran umuman bo'lmasa
   422ga qaytilishi. `OrderTest`/`MenuTest` chegirma mantig'ini (narx,
   muddati/porsiyasi tugagach yo'qolishi, yetarli bo'lmagan porsiyaga

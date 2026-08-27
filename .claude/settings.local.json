@@ -10,7 +10,21 @@
       "Bash(apt list *)",
       "Bash(php artisan *)",
       "Read(//home/abdulqayum/Downloads/**)",
-      "Read(//tmp/claude-1000/**)"
+      "Read(//tmp/claude-1000/**)",
+      "Read(//home/abdulqayum/.ssh/**)",
+      "Bash(timeout 8 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new root@189.74.97.162 \"echo CONNECTION_OK && whoami && lsb_release -d\")",
+      "Bash(git fetch *)",
+      "Bash(git rev-list *)",
+      "Bash(composer show *)",
+      "Bash(ssh root@189.74.97.162 \"apt-get update -y 2>&1 | tail -5 && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y 2>&1 | tail -15\")",
+      "Bash(dig +short qr-dasturxon.uz A)",
+      "Bash(dig +short www.qr-dasturxon.uz A)",
+      "Bash(ssh root@189.74.97.162 \"ps aux | grep -E 'apt|dpkg' | grep -v grep; echo '---'; ps aux | grep 'apt-get upgrade' | grep -v grep && echo STILL_RUNNING || echo NOT_RUNNING\")",
+      "Bash(ssh root@189.74.97.162 \"tail -30 /var/log/dpkg.log 2>/dev/null; echo '---apt history---'; tail -40 /var/log/apt/history.log 2>/dev/null\")",
+      "Bash(ssh root@189.74.97.162 \"DEBIAN_FRONTEND=noninteractive apt-get install -y nginx mysql-server php8.3-fpm php8.3-mysql php8.3-mbstring php8.3-xml php8.3-curl php8.3-zip php8.3-bcmath php8.3-gd git unzip curl certbot python3-certbot-nginx supervisor 2>&1 | tail -60\")",
+      "Bash(dig qr-dasturxon.uz A +noall +answer +authority +stats)",
+      "Bash(dig qr-dasturxon.uz NS +noall +answer +authority)",
+      "Bash(ssh root@189.74.97.162 \"ps aux | grep -E 'apt|dpkg' | grep -v grep; echo '---dpkg lock---'; lsof /var/lib/dpkg/lock-frontend 2>&1; echo '---nginx installed?---'; which nginx mysql php8.3 git composer node 2>&1\")"
     ]
   }
 }

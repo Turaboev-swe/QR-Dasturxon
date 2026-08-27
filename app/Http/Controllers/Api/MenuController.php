@@ -101,6 +101,7 @@ class MenuController extends Controller
                     'comment' => $review->comment,
                     'name' => $review->telegramUser->first_name,
                     'created_at' => $review->created_at,
+                    'verified' => $review->order_id !== null,
                 ]),
             ],
             'categories' => $categories->map(fn (Category $category) => [

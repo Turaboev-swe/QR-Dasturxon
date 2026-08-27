@@ -106,10 +106,11 @@
 <div class="modal-overlay" id="review-modal-overlay">
     <div class="sheet" style="border-radius:18px;">
         <h3 id="review-modal-title" style="margin:0 0 10px;font-family:'Cormorant Garamond',serif;"></h3>
-        <div id="review-form-empty" class="muted hidden"></div>
         <div id="review-form-body">
-            <label id="review-pick-label" style="font-size:12px;font-weight:700;"></label>
-            <select id="review-order-select" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--paper-2);margin:6px 0 12px;font-family:'Manrope',sans-serif;"></select>
+            <div id="review-order-picker-row" class="hidden">
+                <label id="review-pick-label" style="font-size:12px;font-weight:700;"></label>
+                <select id="review-order-select" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--paper-2);margin:6px 0 12px;font-family:'Manrope',sans-serif;"></select>
+            </div>
             <label id="review-rating-label" style="font-size:12px;font-weight:700;"></label>
             <div id="review-stars">
                 <span class="star" data-n="1">★</span><span class="star" data-n="2">★</span><span class="star" data-n="3">★</span><span class="star" data-n="4">★</span><span class="star" data-n="5">★</span>
@@ -117,5 +118,21 @@
             <textarea id="review-comment"></textarea>
             <button class="confirm-btn" id="review-submit-btn"></button>
         </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="thankyou-modal-overlay" onclick="if(event.target===this)this.classList.remove('show')">
+    <div class="sheet" style="border-radius:18px;text-align:center;">
+        <h3 id="thankyou-title" style="margin:0 0 8px;font-family:'Cormorant Garamond',serif;color:var(--maroon);"></h3>
+        <p id="thankyou-body" class="muted" style="margin-bottom:14px;"></p>
+        <div id="thankyou-form">
+            <div id="thankyou-stars" style="margin-bottom:10px;">
+                <span class="star" data-n="1">★</span><span class="star" data-n="2">★</span><span class="star" data-n="3">★</span><span class="star" data-n="4">★</span><span class="star" data-n="5">★</span>
+            </div>
+            <textarea id="thankyou-comment"></textarea>
+            <button class="confirm-btn" id="thankyou-submit-btn"></button>
+            <button class="ghost-btn" id="thankyou-skip-btn" style="width:100%;margin-top:8px;"></button>
+        </div>
+        <p id="thankyou-success" class="hidden"></p>
     </div>
 </div>

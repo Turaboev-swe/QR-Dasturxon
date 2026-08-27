@@ -224,6 +224,7 @@
     .review { background: var(--white); border-radius: 14px; padding: 12px 14px; margin-bottom: 8px; box-shadow: var(--shadow); }
     .review-top { display: flex; justify-content: space-between; font-size: 11.5px; margin-bottom: 4px; }
     .review-name { font-weight: 800; }
+    .review-verified { font-weight: 700; font-size: 10px; color: var(--teal); }
     .review-text { font-size: 12px; color: var(--ink-soft); line-height: 1.5; }
     .muted { color: var(--ink-soft); font-size: 13px; }
     #c-leave-review-btn { width: 100%; margin-top: 8px; background: var(--teal); color: #fff; border: none; border-radius: 10px; padding: 0 14px; height: 40px; font-weight: 700; }

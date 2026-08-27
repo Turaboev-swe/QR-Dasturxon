@@ -418,41 +418,43 @@
         }
         list.innerHTML = reviews.map(function (r) {
             return '<div class="review">' +
-                '<div class="review-top"><span class="review-name">' + r.name + '</span><span>' + '★'.repeat(r.rating) + '</span></div>' +
+                '<div class="review-top"><span class="review-name">' + r.name +
+                (r.verified ? ' <span class="review-verified">✓ ' + M.t('reviewVerifiedBadge') + '</span>' : '') +
+                '</span><span>' + '★'.repeat(r.rating) + '</span></div>' +
                 (r.comment ? '<div class="review-text">' + r.comment + '</div>' : '') +
                 '</div>';
         }).join('');
     }
 
+    // Leaving a review never requires an order — it's just an opinion, not
+    // proof of purchase (server enforces the same: order_id is optional).
+    // The order picker is a pure enhancement shown only when reviewable
+    // orders exist, so the customer can link one for a "verified" badge.
     async function openReviewForm() {
         const select = el('review-order-select');
         select.innerHTML = '';
 
-        let orders;
+        let reviewable = [];
         try {
-            orders = (await M.apiFetch('/api/orders')).orders;
+            const orders = (await M.apiFetch('/api/orders')).orders;
+            reviewable = orders.filter(function (o) {
+                return (o.status === 'served' || o.status === 'paid') && !o.review;
+            });
         } catch (e) {
-            showStatus(e.message, true);
-            return;
+            // Can't load orders (e.g. offline) — still let them leave a
+            // plain review rather than blocking on this fetch.
         }
 
-        const reviewable = orders.filter(function (o) {
-            return (o.status === 'served' || o.status === 'paid') && !o.review;
-        });
-
-        if (!reviewable.length) {
-            el('review-form-body').classList.add('hidden');
-            el('review-form-empty').textContent = M.t('noReviewableOrders');
-            el('review-form-empty').classList.remove('hidden');
-        } else {
-            el('review-form-empty').classList.add('hidden');
-            el('review-form-body').classList.remove('hidden');
+        if (reviewable.length) {
             reviewable.forEach(function (o) {
                 const opt = document.createElement('option');
                 opt.value = o.id;
                 opt.textContent = '#' + o.id + ' — ' + M.formatPrice(o.total_price);
                 select.appendChild(opt);
             });
+            el('review-order-picker-row').classList.remove('hidden');
+        } else {
+            el('review-order-picker-row').classList.add('hidden');
         }
 
         el('review-modal-title').textContent = M.t('leaveReview');
@@ -477,16 +479,59 @@
     async function submitReview() {
         const orderId = el('review-order-select').value;
         const comment = el('review-comment').value.trim();
+        const body = { rating: selectedRating, comment: comment || null };
+        if (orderId) body.order_id = Number(orderId);
 
         try {
-            await M.apiFetch('/api/reviews', {
-                method: 'POST',
-                body: JSON.stringify({ order_id: Number(orderId), rating: selectedRating, comment: comment || null }),
-            });
+            await M.apiFetch('/api/reviews', { method: 'POST', body: JSON.stringify(body) });
             closeReviewForm();
             M.haptic('success');
             showStatus(M.t('reviewSubmitted'), false);
             setTimeout(hideStatus, 3000);
+        } catch (e) {
+            alert(e.message);
+        }
+    }
+
+    // "Hisob so'rash" thank-you + optional review prompt — a lightweight
+    // farewell, not a gate: skipping it or closing it never blocks
+    // anything else in the app (calling a waiter again, etc. all still work).
+    let thankYouRating = 5;
+    function openThankYouModal() {
+        thankYouRating = 5;
+        el('thankyou-title').textContent = M.t('thankYouTitle');
+        el('thankyou-body').textContent = M.t('thankYouBody');
+        el('thankyou-comment').value = '';
+        el('thankyou-comment').placeholder = M.t('commentOptional');
+        el('thankyou-submit-btn').textContent = M.t('submitReview');
+        el('thankyou-skip-btn').textContent = M.t('skip');
+        el('thankyou-form').classList.remove('hidden');
+        el('thankyou-success').classList.add('hidden');
+        setThankYouStarRating(5);
+        el('thankyou-modal-overlay').classList.add('show');
+    }
+    function closeThankYouModal() { el('thankyou-modal-overlay').classList.remove('show'); }
+
+    function setThankYouStarRating(n) {
+        thankYouRating = n;
+        document.querySelectorAll('#thankyou-stars .star').forEach(function (star, i) {
+            star.classList.toggle('active', i < n);
+        });
+    }
+
+    async function submitThankYouReview() {
+        const comment = el('thankyou-comment').value.trim();
+
+        try {
+            await M.apiFetch('/api/reviews', {
+                method: 'POST',
+                body: JSON.stringify({ rating: thankYouRating, comment: comment || null }),
+            });
+            M.haptic('success');
+            el('thankyou-form').classList.add('hidden');
+            el('thankyou-success').textContent = M.t('reviewSubmitted');
+            el('thankyou-success').classList.remove('hidden');
+            setTimeout(closeThankYouModal, 2000);
         } catch (e) {
             alert(e.message);
         }
@@ -564,6 +609,7 @@
                 await M.apiFetch('/api/waiter-calls', { method: 'POST', body: JSON.stringify({ type: 'bill' }) });
                 M.haptic('success');
                 showStatus(M.t('billRequested'), false);
+                openThankYouModal();
             } catch (e) {
                 showStatus(e.message, true);
             }
@@ -581,6 +627,12 @@
         el('review-submit-btn').onclick = submitReview;
         document.querySelectorAll('#review-stars .star').forEach(function (star, i) {
             star.onclick = function () { setStarRating(i + 1); };
+        });
+
+        el('thankyou-submit-btn').onclick = submitThankYouReview;
+        el('thankyou-skip-btn').onclick = closeThankYouModal;
+        document.querySelectorAll('#thankyou-stars .star').forEach(function (star, i) {
+            star.onclick = function () { setThankYouStarRating(i + 1); };
         });
 
         el('c-place-order').onclick = goToCheckout;

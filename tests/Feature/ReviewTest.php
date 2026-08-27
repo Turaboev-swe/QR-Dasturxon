@@ -46,15 +46,24 @@ class ReviewTest extends TestCase
         ]);
     }
 
-    private function initDataHeaderFor(int $telegramId): array
+    private function initDataHeaderFor(int $telegramId, ?string $startParam = null): array
     {
-        $initData = app(TelegramAuth::class)->sign([
+        $fields = [
             'auth_date' => (string) time(),
             'query_id' => 'AA1',
             'user' => json_encode(['id' => $telegramId, 'first_name' => 'Test', 'language_code' => 'uz']),
-        ]);
+        ];
 
-        return ['X-Telegram-Init-Data' => $initData];
+        if ($startParam !== null) {
+            $fields['start_param'] = $startParam;
+        }
+
+        return ['X-Telegram-Init-Data' => app(TelegramAuth::class)->sign($fields)];
+    }
+
+    private function customerHeaderFor(int $telegramId): array
+    {
+        return $this->initDataHeaderFor($telegramId, 'r'.$this->restaurant->id.'_t1');
     }
 
     private function createOrder(string $status): Order
@@ -75,7 +84,7 @@ class ReviewTest extends TestCase
         $response = $this->postJson('/api/reviews', [
             'order_id' => $order->id,
             'rating' => 5,
-        ], $this->initDataHeaderFor(999888777));
+        ], $this->customerHeaderFor(999888777));
 
         $response->assertStatus(404);
         $this->assertDatabaseCount('reviews', 0);
@@ -88,7 +97,7 @@ class ReviewTest extends TestCase
         $response = $this->postJson('/api/reviews', [
             'order_id' => $order->id,
             'rating' => 5,
-        ], $this->initDataHeaderFor($this->owner->telegram_id));
+        ], $this->customerHeaderFor($this->owner->telegram_id));
 
         $response->assertStatus(422);
         $this->assertDatabaseCount('reviews', 0);
@@ -102,7 +111,7 @@ class ReviewTest extends TestCase
             'order_id' => $order->id,
             'rating' => 4,
             'comment' => 'Juda mazali edi',
-        ], $this->initDataHeaderFor($this->owner->telegram_id));
+        ], $this->customerHeaderFor($this->owner->telegram_id));
 
         $response->assertStatus(201)
             ->assertJson([
@@ -131,7 +140,7 @@ class ReviewTest extends TestCase
         $response = $this->postJson('/api/reviews', [
             'order_id' => $order->id,
             'rating' => 1,
-        ], $this->initDataHeaderFor($this->owner->telegram_id));
+        ], $this->customerHeaderFor($this->owner->telegram_id));
 
         $response->assertStatus(422);
         $this->assertDatabaseCount('reviews', 1);
@@ -144,7 +153,7 @@ class ReviewTest extends TestCase
         $response = $this->postJson('/api/reviews', [
             'order_id' => $order->id,
             'rating' => 6,
-        ], $this->initDataHeaderFor($this->owner->telegram_id));
+        ], $this->customerHeaderFor($this->owner->telegram_id));
 
         $response->assertStatus(422);
         $this->assertDatabaseCount('reviews', 0);
@@ -168,5 +177,62 @@ class ReviewTest extends TestCase
         $orders = collect($response->json('orders'));
         $this->assertNotNull($orders->firstWhere('id', $reviewed->id)['review']);
         $this->assertNull($orders->firstWhere('id', $unreviewed->id)['review']);
+    }
+
+    public function test_a_customer_with_no_orders_at_all_can_still_leave_a_review(): void
+    {
+        $response = $this->postJson('/api/reviews', [
+            'rating' => 5,
+            'comment' => 'Ajoyib joy!',
+        ], $this->customerHeaderFor($this->owner->telegram_id));
+
+        $response->assertStatus(201)
+            ->assertJson([
+                'review' => [
+                    'restaurant_id' => $this->restaurant->id,
+                    'order_id' => null,
+                    'rating' => 5,
+                    'comment' => 'Ajoyib joy!',
+                ],
+            ]);
+
+        $this->assertDatabaseCount('reviews', 1);
+        $this->assertDatabaseCount('orders', 0);
+    }
+
+    public function test_review_still_requires_a_valid_start_param(): void
+    {
+        $response = $this->postJson('/api/reviews', [
+            'rating' => 5,
+        ], $this->initDataHeaderFor($this->owner->telegram_id));
+
+        $response->assertStatus(422);
+        $this->assertDatabaseCount('reviews', 0);
+    }
+
+    public function test_menu_marks_order_linked_reviews_as_verified_and_others_as_not(): void
+    {
+        $order = $this->createOrder(Order::STATUS_PAID);
+        Review::create([
+            'restaurant_id' => $this->restaurant->id,
+            'order_id' => $order->id,
+            'telegram_user_id' => $this->owner->id,
+            'rating' => 5,
+            'comment' => 'Tasdiqlangan sharh',
+        ]);
+        Review::create([
+            'restaurant_id' => $this->restaurant->id,
+            'order_id' => null,
+            'telegram_user_id' => $this->owner->id,
+            'rating' => 4,
+            'comment' => 'Buyurtmasiz sharh',
+        ]);
+
+        $response = $this->getJson('/api/menu', $this->customerHeaderFor($this->owner->telegram_id));
+
+        $response->assertStatus(200);
+        $reviews = collect($response->json('restaurant.recent_reviews'));
+        $this->assertTrue($reviews->firstWhere('comment', 'Tasdiqlangan sharh')['verified']);
+        $this->assertFalse($reviews->firstWhere('comment', 'Buyurtmasiz sharh')['verified']);
     }
 }
