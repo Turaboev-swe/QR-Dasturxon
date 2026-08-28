@@ -7,6 +7,8 @@ use App\Models\Dish;
 use App\Models\Order;
 use App\Models\Restaurant;
 use App\Models\RestaurantTable;
+use App\Models\Staff;
+use App\Models\TelegramUser;
 use App\Services\TelegramAuth;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -150,7 +152,7 @@ class OrderTest extends TestCase
         $order = Order::create([
             'restaurant_id' => $this->restaurant->id,
             'restaurant_table_id' => $this->table->id,
-            'telegram_user_id' => \App\Models\TelegramUser::create(['telegram_id' => 1, 'first_name' => 'X'])->id,
+            'telegram_user_id' => TelegramUser::create(['telegram_id' => 1, 'first_name' => 'X'])->id,
             'status' => Order::STATUS_PENDING,
             'total_price' => 20000,
         ]);
@@ -163,10 +165,10 @@ class OrderTest extends TestCase
             'is_active' => true,
         ]);
 
-        \App\Models\Staff::create([
+        Staff::create([
             'restaurant_id' => $otherRestaurant->id,
             'name' => 'Foreign',
-            'role' => \App\Models\Staff::ROLE_CASHIER,
+            'role' => Staff::ROLE_CASHIER,
             'telegram_id' => 700000099,
             'is_active' => true,
         ]);
@@ -187,15 +189,15 @@ class OrderTest extends TestCase
         $order = Order::create([
             'restaurant_id' => $this->restaurant->id,
             'restaurant_table_id' => $this->table->id,
-            'telegram_user_id' => \App\Models\TelegramUser::create(['telegram_id' => 1, 'first_name' => 'X'])->id,
+            'telegram_user_id' => TelegramUser::create(['telegram_id' => 1, 'first_name' => 'X'])->id,
             'status' => Order::STATUS_PENDING,
             'total_price' => 20000,
         ]);
 
-        \App\Models\Staff::create([
+        Staff::create([
             'restaurant_id' => $this->restaurant->id,
             'name' => 'Cashier',
-            'role' => \App\Models\Staff::ROLE_CASHIER,
+            'role' => Staff::ROLE_CASHIER,
             'telegram_id' => 700000001,
             'is_active' => true,
         ]);
@@ -217,15 +219,15 @@ class OrderTest extends TestCase
         $order = Order::create([
             'restaurant_id' => $this->restaurant->id,
             'restaurant_table_id' => $this->table->id,
-            'telegram_user_id' => \App\Models\TelegramUser::create(['telegram_id' => 1, 'first_name' => 'X'])->id,
+            'telegram_user_id' => TelegramUser::create(['telegram_id' => 1, 'first_name' => 'X'])->id,
             'status' => Order::STATUS_PAID,
             'total_price' => 20000,
         ]);
 
-        \App\Models\Staff::create([
+        Staff::create([
             'restaurant_id' => $this->restaurant->id,
             'name' => 'Cashier',
-            'role' => \App\Models\Staff::ROLE_CASHIER,
+            'role' => Staff::ROLE_CASHIER,
             'telegram_id' => 700000002,
             'is_active' => true,
         ]);
@@ -301,7 +303,7 @@ class OrderTest extends TestCase
 
     public function test_a_customer_cannot_view_another_customers_order(): void
     {
-        $otherUser = \App\Models\TelegramUser::create(['telegram_id' => 999999998, 'first_name' => 'Other']);
+        $otherUser = TelegramUser::create(['telegram_id' => 999999998, 'first_name' => 'Other']);
         $order = Order::create([
             'restaurant_id' => $this->restaurant->id,
             'restaurant_table_id' => $this->table->id,

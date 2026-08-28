@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Models\Review;
 use App\Models\TelegramUser;
+use App\Services\DailyStatsService;
 use App\Services\TableResolver;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -17,6 +18,7 @@ class ReviewController extends Controller
 
     public function __construct(
         private readonly TableResolver $tableResolver,
+        private readonly DailyStatsService $dailyStats,
     ) {}
 
     /**
@@ -92,6 +94,8 @@ class ReviewController extends Controller
             'rating' => $validated['rating'],
             'comment' => $validated['comment'] ?? null,
         ]);
+
+        $this->dailyStats->recordReview($review);
 
         return response()->json(['review' => $review], 201);
     }

@@ -10,6 +10,7 @@ use App\Models\RestaurantTable;
 use App\Models\Staff;
 use App\Models\TelegramUser;
 use App\Models\WaiterCall;
+use App\Services\DailyStatsService;
 use App\Services\TableResolver;
 use App\Services\TelegramNotifier;
 use Illuminate\Http\JsonResponse;
@@ -22,6 +23,7 @@ class WaiterCallController extends Controller
     public function __construct(
         private readonly TableResolver $tableResolver,
         private readonly TelegramNotifier $telegramNotifier,
+        private readonly DailyStatsService $dailyStats,
     ) {}
 
     /**
@@ -97,6 +99,8 @@ class WaiterCallController extends Controller
             'handled_by_telegram_id' => $isReminderToAssignedWaiter ? $table->assigned_waiter_telegram_id : null,
             'handled_by_name' => $isReminderToAssignedWaiter ? $table->assigned_waiter_name : null,
         ]);
+
+        $this->dailyStats->recordWaiterCall($call);
 
         if ($restaurant->waiter_chat_id) {
             $this->notifyWaiter($restaurant, $table, $call, $isReminderToAssignedWaiter);

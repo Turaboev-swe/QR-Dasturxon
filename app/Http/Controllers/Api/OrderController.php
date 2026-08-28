@@ -12,6 +12,7 @@ use App\Models\Restaurant;
 use App\Models\RestaurantTable;
 use App\Models\Staff;
 use App\Models\TelegramUser;
+use App\Services\DailyStatsService;
 use App\Services\TableResolver;
 use App\Services\TelegramNotifier;
 use Illuminate\Http\JsonResponse;
@@ -25,6 +26,7 @@ class OrderController extends Controller
     public function __construct(
         private readonly TableResolver $tableResolver,
         private readonly TelegramNotifier $telegramNotifier,
+        private readonly DailyStatsService $dailyStats,
     ) {}
 
     /**
@@ -188,6 +190,7 @@ class OrderController extends Controller
         }
 
         $order->load('items.dish');
+        $this->dailyStats->recordOrder($order);
 
         // A new order means a new dining session at this table — the
         // previously-assigned waiter (see WaiterCallController::store) no

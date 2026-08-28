@@ -66,7 +66,7 @@ class DatabaseSeeder extends Seeder
         }
 
         Chef::updateOrCreate(
-            ['restaurant_id' => $restaurant->id, 'name' => "Ustoz Oybek Qodirov"],
+            ['restaurant_id' => $restaurant->id, 'name' => 'Ustoz Oybek Qodirov'],
             [
                 'title' => 'Bosh oshpaz',
                 'experience_years' => 18,

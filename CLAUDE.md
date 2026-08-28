@@ -71,7 +71,16 @@ avtomatik aniqlanadi va yaratiladi.
   (+ `type`: `waiter`/`bill`, + `handled_by_telegram_id`/
   `handled_by_name`), `payments`, `chefs`
   (restoran oshpazi: `title`, `experience_years`,
-  `specialty`, `tier_badge`, `photo_path`).
+  `specialty`, `tier_badge`, `photo_path`), `daily_stats` (bepul pilot
+  sinovda foydalanishni kuzatish uchun — hozircha obuna/to'lov/bloklash
+  mantig'i YO'Q, faqat statistika: restoran+kun bo'yicha agregat
+  `orders_count`/`orders_total_amount`/`waiter_calls_count`/
+  `bill_requests_count`/`unique_users_count`/`reviews_count`, unique
+  `(restaurant_id, date)` — `orders`dan har safar hisoblash o'rniga
+  tayyor yig'indi saqlanadi, quyidagi `DailyStatsService` bo'limiga
+  qarang), `daily_restaurant_visits` (modeli yo'q —
+  `daily_stats.unique_users_count` uchun ichki dedup jadvali, quyiga
+  qarang).
 - Modellar: `app/Models/*`. `App\Models\Concerns\HasTranslations::translate()`
   orqali tarjima maydonlaridan tilga mos qiymat olinadi (fallback: `uz`).
   `Order` va `WaiterCall`da `canTransitionTo()` — ruxsat etilgan holat
@@ -90,7 +99,36 @@ avtomatik aniqlanadi va yaratiladi.
   OrderController va WaiterCallController baravar ishlatadi (stol/restoran
   hech qachon request'dan emas, faqat imzolangan initData'dan olinadi).
   Resolve bo'lmasa **422** qaytaradi (URL resursi emas, mijoz kiritmasi
-  xatosi hisoblanadi — 404 emas).
+  xatosi hisoblanadi — 404 emas). Obunasi faol bo'lmagan restoran uchun
+  **403** qaytaradi (yuqoridagi xavfsizlik qoidalari bo'limiga qarang).
+- `app/Services/DailyStatsService.php` — `daily_stats`ni to'ldiradigan
+  YAGONA joy (controller'lar to'g'ridan-to'g'ri yozmaydi, thin-controller
+  qoidasiga mos): `recordOrder()` (`OrderController::store` muvaffaqiyatli
+  bo'lgach), `recordWaiterCall()` (`WaiterCallController::store` — `type`
+  ga qarab `waiter_calls_count` yoki `bill_requests_count`ni oshiradi,
+  darhol `resolved` yaratilgan eslatma-chaqiruvlar ham hisoblanadi,
+  chunki yozuv baribir yaratilgan), `recordReview()`
+  (`ReviewController::store`), `recordVisit()` (`SessionController::resolve`
+  — "sessiya ochilganda" hodisasi; `unique_users_count`ni faqat o'sha
+  kuni o'sha restoranga birinchi marta kelgan `telegram_user` uchun
+  oshiradi). Har bir oshirish `insertOrIgnore()` + `column = column + N`
+  UPDATE juftligi orqali race-safe (bir vaqtda kelgan ikkita so'rov bir
+  xil kunning birinchi yozuvini yaratishga urinsa, ikkalasi ham xatosiz
+  o'tadi, keyin ikkalasi ham to'g'ri oshiradi). Noyob foydalanuvchi
+  hisoblash uchun Redis/cache emas, alohida `daily_restaurant_visits`
+  jadvali (`restaurant_id`+`telegram_user_id`+`date` bo'yicha unique)
+  tanlandi — sabab: loyihada Redis umuman yo'q va `CACHE_STORE=database`
+  allaqachon MySQL'ning o'zi, ya'ni cache-based yechim shunchaki shu
+  MySQL jadvalining kamroq shaffof versiyasi bo'lardi; haqiqiy jadval esa
+  har kecha yarim tunda tugaydigan TTL boshqarish shart emasligini,
+  qayta ishga tushirishlarga chidamliligini va oddiy SQL bilan tekshirish
+  mumkinligini beradi. **Statistika yozish asosiy amalni hech qachon
+  buzmaydi**: har bir public metod o'z ichida `try/catch(\Throwable)`
+  bilan o'ralgan (`safely()` private helper) — stats yozishda xato bo'lsa
+  (masalan DB vaqtincha ishlamasa), xato faqat `Log::warning('daily_stats.
+  record_failed', [...])` bilan yoziladi, buyurtma/chaqiruv/sharh/sessiya
+  esa baribir muvaffaqiyatli yakunlanadi; chaqiruvchi controller'lar hech
+  qanday try/catch yozishi shart emas.
 - **Xodimlarga Telegram guruh orqali xabarnoma** — `app/Services/TelegramNotifier.php`
   (`sendMessage(chatId, text, replyMarkup=null)` / `editMessageText(chatId,
   messageId, text, replyMarkup=null)`, Laravel `Http` fasadi orqali to'g'ridan-to'g'ri
@@ -388,8 +426,19 @@ avtomatik aniqlanadi va yaratiladi.
   yozmang**, faqat `.env`da saqlanadi.
 - Testlar: `tests/Feature/{SessionInitTest,ReviewTest,WaiterCallTest,
   OrderTest,AdminPanelTest,MenuTest,StaffAuthTest,TelegramWebhookTest,
-  QrBridgeTest}.php`
-  — `php artisan test` bilan barchasi o'tadi (76 test, 215 assertion).
+  QrBridgeTest,DailyStatsTest,PlatformAdminAuthTest}.php`
+  — `php artisan test` bilan barchasi o'tadi (87 test, 255 assertion).
+  `PlatformAdminAuthTest` — Filament `/admin` panelining guard
+  izolyatsiyasini qamrab oladi (quyidagi Filament bo'limiga qarang).
+  `DailyStatsTest` — 3 ta buyurtma → `orders_count=3`, bitta
+  foydalanuvchi bir kunda 5 marta sessiya ochsa `unique_users_count`
+  baribir 1 qolishi, boshqa foydalanuvchi kelsa 2ga o'tishi,
+  `waiter_calls_count`/`bill_requests_count` alohida-alohida oshishi,
+  `reviews_count`, ikki xil restoran statistikasi aralashmasligi, va
+  `daily_stats` jadvali qasddan o'chirib qo'yilganda ham (simulyatsiya
+  qilingan yozish xatosi) buyurtma/ofitsiant chaqiruvi baribir
+  muvaffaqiyatli yaratilishi va xato faqat `Log::warning(
+  'daily_stats.record_failed', ...)` bilan yozilishini qamrab oladi.
   Barcha xodim testlari endi `TelegramAuth::sign()` bilan imzolangan
   `X-Telegram-Init-Data` header ishlatadi (`/api/staff/login` yo'q).
   `ReviewTest` sharh buyurtmasiz ham yaratilishini, `order_id` berilmasa
@@ -501,6 +550,173 @@ Tarjima maydonlari JSON ustun sifatida saqlanadi:
 `{"uz":"...", "en":"...", "ru":"...", "ko":"...", "fr":"...", "zh":"..."}`
 (`name_translations`, `ingredients_translations` va h.k.)
 
+## Filament SaaS operator paneli (`/admin`)
+Platforma egasi (siz) uchun — **oddiy veb sayt, Telegram Mini App EMAS**,
+brauzerda `https://qr-dasturxon.uz/admin` (yoki lokal `http://127.0.0.1:8091/admin`)
+orqali ochiladi, Filament'ning standart email+parol login'i bilan. Uchinchi,
+**butunlay mustaqil** kirish yo'li — mijoz (`telegram.auth`/`TelegramUser`)
+va xodim (`staff.auth`/`Staff`) bilan hech qanday umumiy jihati yo'q.
+
+- **PHP kengaytmalar talabi**: Filament v5 `ext-intl` va (uning
+  `openspout` bog'liqligi orqali, export funksiyasi uchun) `ext-zip`ni
+  talab qiladi. Bu loyihaning mahalliy dasturchi muhitida standart PHP
+  o'rnatilishida ular yo'q edi — production serverga deploy qilishdan
+  oldin **`sudo apt install php8.5-intl php8.5-zip`** (yoki mos PHP
+  versiyasi) ishga tushirilishi SHART, aks holda `composer install`/
+  ilovaning o'zi butunlay ishlamaydi. Mahalliy muhitda vaqtinchalik yechim
+  sifatida bu ikkalasi `~/.local/php-extra/`ga qo'lda joylashtirilgan va
+  `PHP_INI_SCAN_DIR` orqali yoqilgan (`.ini` fayllar tizim `conf.d`siga
+  yozilmagan, chunki bunga root kerak) — bu **faqat vaqtinchalik**,
+  haqiqiy o'rnatish keyinroq qo'lda qilinishi kerak.
+- **Auth**: `App\Models\PlatformAdmin` (`platform_admins` jadvali —
+  `name`/`email`/`password`, oddiy Laravel `Authenticatable`, `Filament
+  Models\Contracts\FilamentUser`/`HasName` implement qiladi). Alohida
+  guard/provider — `config/auth.php`dagi `platform_admin` guard +
+  `platform_admins` provider, `User`/`TelegramUser`/`Staff`dan butunlay
+  mustaqil. `App\Providers\Filament\AdminPanelProvider` panelni
+  `->authGuard('platform_admin')` bilan shu guard'ga bog'laydi.
+  `php artisan platform-admin:create` — birinchi (yoki keyingi) adminni
+  interaktiv yaratadi (`app/Console/Commands/CreatePlatformAdmin.php`):
+  ism/email/parol so'raladi (parol `Command::secret()` bilan
+  yashiriladi, ekranga chiqmaydi, hech qayerda log qilinmaydi), email
+  unique va parol kamida 8 belgi tekshiriladi, parol/tasdiqlash mos
+  kelishi tekshiriladi. `tests/Feature/PlatformAdminAuthTest.php` guard
+  izolyatsiyasini qamrab oladi (mehmon → login sahifasiga redirect,
+  platform admin → 200, boshqa (`web`) guard'dagi sessiya → hamon
+  redirect).
+- **Dashboard** (`GET /admin`) — barcha widget `daily_stats`dan
+  o'qiydi, hech qachon `orders`dan qayta hisoblamaydi:
+  - `TodayStatsWidget`/`WeeklyStatsWidget`/`MonthlyStatsWidget`
+    (`app/Filament/Widgets/`, umumiy mantiq
+    `App\Filament\Support\BaseWindowStatsWidget`da) — bugun/oxirgi 7
+    kun/oxirgi 30 kun kesimida buyurtmalar soni, jami summa, noyob
+    foydalanuvchilar, ofitsiant chaqiruvlari, hisob so'rovlari — har biri
+    shunchaki `SUM(daily_stats.ustun)` shu oyna bo'yicha. **Bilingan
+    cheklov**: ko'p kunlik oynadagi "noyob foydalanuvchilar" — har
+    kunning allaqachon-noyob sonini qo'shish, ya'ni haqiqiy davr-bo'yi
+    noyob son EMAS (bir mijoz 2 xil kunda kelsa 2 marta sanaladi) — buni
+    to'g'irlash uchun `daily_restaurant_visits`dan to'g'ridan-to'g'ri
+    distinct hisoblash kerak bo'lardi, ataylab qilinmadi (barcha
+    ko'rsatkichlarni bir xil oddiy SUM shakliga mos qilish uchun).
+  - `DailyActivityChartWidget` — barcha restoranlar yig'indisida, oxirgi
+    30 kunlik chiziqli grafik (buyurtmalar + noyob foydalanuvchilar);
+    faoliyat bo'lmagan kunlar `daily_stats`da umuman yo'q, shuning uchun
+    kun oralig'i qo'lda (`for` sikli) to'ldiriladi — bo'sh kunlar
+    grafikdan tushib qolmasligi uchun.
+  - `RestaurantActivityWidget` — har bir restoran uchun bugun/7 kun/30
+    kunlik buyurtmalar soni + **oxirgi faollik sanasi**
+    (`MAX(daily_stats.date)`) rangli belgi bilan (yashil = bugun/kecha,
+    sariq = 7 kun ichida, qizil = undan eski yoki umuman bo'lmagan) —
+    pilot davrida "qaysi restoran tashlab qo'ygan"ni bir qarashda
+    ko'rsatish uchun ataylab shunday qilingan.
+- **Resurslar** (`app/Filament/Resources/`, hammasi shu joyda
+  generatsiya qilingan standart Filament v5 tuzilishi bilan —
+  `{Resource}/{Schemas/*Form,Tables/*Table,Pages/*}`):
+  - `RestaurantResource` — nomi (6 tilda tab, pastga qarang), faol/
+    tasdiqlangan holat, belgi matni, oshxona/ofitsiant chat ID, geo-
+    ma'lumot (faqat ma'lumot uchun, hech qanday gate emas — yuqoridagi
+    xavfsizlik qoidalariga qarang). `TablesRelationManager` orqali shu
+    restoranning stollarini (kod/nomi/faol) to'g'ridan-to'g'ri shu
+    sahifada qo'shish/tahrirlash/o'chirish mumkin (assotsiatsiya/
+    dissotsiatsiya YO'Q — stol mustaqil obyekt emas, faqat hasMany).
+  - `CategoryResource`/`DishResource` — "Menyu" navigatsiya guruhida.
+    Restoran tanlovi tarjima orqali ko'rsatiladi
+    (`getOptionLabelFromRecordUsing`). `DishResource`da kategoriya
+    tanlovi restoran tanlanganidan keyin FAQAT o'sha restoranning
+    kategoriyalarini ko'rsatadi (`->live()` + `modifyQueryUsing`).
+    `image_path` ataylab oddiy matn maydoni (fayl yuklash UI hali yo'q —
+    yuqoridagi "Keyingi vazifalar"ga qarang), `discount_*`/`taste_*`
+    maydonlari BU yerda YO'Q (ular OSHXONA EGASI panelining ishlash
+    vaqti konsepsiyasi, operator paneliga tegishli emas).
+  - `OrderResource` — **faqat o'qish uchun**: `canCreate()`/`canEdit()`/
+    `canDelete()`/`canDeleteAny()` hammasi `false`, `getPages()`da
+    faqat `index`/`view` bor (`create`/`edit` route'lari umuman mavjud
+    emas) — buyurtma tarixiy moliyaviy yozuv, hech qachon
+    tahrirlanmaydi/o'chirilmaydi. Ko'rish sahifasida taomlar ro'yxati
+    (`RepeatableEntry`) bilan.
+  - `StaffResource` — **haqiqiy joriy auth mexanizmiga mos**: Telegram
+    ID maydoni (aniq helper matn bilan: "login/parol/PIN YO'Q"), rol
+    (ofitsiant/kassir/egasi), telefon faqat ma'lumot uchun. PIN/parol
+    maydoni YO'Q, chunki bunday tizim umuman mavjud emas
+    (`2026_08_24_000001_switch_staff_auth_to_telegram.php`da olib
+    tashlangan).
+- Barcha tarjima maydonlari (`name_translations` va h.k.) uchun umumiy
+  `App\Filament\Support\TranslatableTabs::input()/textarea()` — har bir
+  tilga (uz/en/ru/ko/fr/zh) alohida tab + maydon, `{ustun}.{til_kodi}`
+  dot-notation orqali JSON ustunga bog'lanadi. Faqat `uz` majburiy.
+  Bo'sh qoldirilgan til `null` sifatida saqlanadi (bo'sh satr emas) —
+  `dehydrateStateUsing` bilan ataylab shunday, aks holda
+  `HasTranslations::translate()`ning `?? $fallback` zanjiri bo'sh satrni
+  "mavjud qiymat" deb hisoblab, `uz`ga qaytmagan bo'lardi.
+
+### Filament paneli — brend uslubi
+Hammasi `app/Providers/Filament/AdminPanelProvider.php`da, faqat
+Filament'ning o'z sozlash metodlari orqali (yangi Blade/CSS komponent
+yozilmagan) — manba: yuqoridagi "Dizayn manbasi" bo'limidagi prototip
+faylining `:root` o'zgaruvchilari.
+
+- **Ranglar** — `->colors([...])`: `warning` uchun
+  `Color::hex('#C79A3E')` (--gold) to'g'ridan-to'g'ri ishlatildi, chunki
+  uning haqiqiy yorqinligi (oklch lightness ≈0.71) Filament'ning
+  avtomatik hosil qiladigan shkalasiga allaqachon yaqin. `primary` uchun
+  esa **qo'lda yig'ilgan to'liq 11-bosqichli shkala** kerak bo'ldi:
+  `Color::hex('#7A2331')` faqat RANGNING TUSINI (hue) qayta ishlatib,
+  qolgan hamma narsani (yorqinlik/to'yinganlik) Filament'ning o'zining
+  qattiq belgilangan shkalasidan oladi — bu shkala 600-bosqichni
+  (tugmalar/faol holatlar ishlatadigan bosqich) yorqinlik ≈0.60'da
+  kutadi, lekin haqiqiy `--maroon` juda qorong'i (yorqinlik ≈0.40) —
+  natijada tugma to'q maroon o'rniga och pushti/korall rangda chiqdi.
+  Tuzatish: `600`/`800`/`900` bosqichlarga aynan `--maroon`/
+  `--maroon-deep`/`--maroon-dark` hexlarini, `700`/`950`ga ular orasidan
+  interpolyatsiya qilingan qiymatlarni, `50`-`500`ga esa och, kamroq
+  muhim bosqichlar uchun qo'lda tanlangan yumshoq tonlarni qo'ydim.
+- **Shriftlar** — `->font('Manrope', provider: GoogleFontProvider::class)`
+  — Filament ishlatadigan asosiy (sans) shrift endi Manrope, mijoz/xodim
+  sahifalari bilan bir xil. `->serifFont('Cormorant Garamond', ...)` ham
+  ro'yxatdan o'tkazilgan (shrift fayli yuklanadi, CSS o'zgaruvchisi
+  mavjud) — **lekin bilib qo'ying**: Filament'ning o'z tayyor
+  view'lari (sahifa sarlavhalari, jadval sarlavhalari va h.k.) HECH
+  QAYERDA `font-serif` Tailwind klassini ishlatmaydi, faqat
+  `font-sans`ni. Shuning uchun bu shriftni ro'yxatdan o'tkazishning
+  o'zi mavjud Filament matnlarini Cormorant Garamond'ga
+  o'zgartirmaydi — buning uchun Filament'ning o'z Blade view'larini
+  qayta yozish kerak bo'lardi, bu esa "yangi komponent yozma" cheklovini
+  buzardi. Amalda Cormorant Garamond hozircha faqat quyidagi brendmark
+  ichida (o'zim qo'lda shu shriftni belgilagan joyda) ko'rinadi.
+- **Brendmark** — `->brandName('QR Dasturxon')` (faqat brauzer
+  tab sarlavhasi uchun — "Sahifa - QR Dasturxon"), `->brandLogo()`ga
+  prototipning oltin yulduzcha SVG'si (`.brandmark .ornament`, aynan
+  bir xil viewBox/path) + "QR **Dasturxon**" matni (Cormorant Garamond,
+  "Dasturxon" so'zi oltin rangda, "QR" so'zi `currentColor` — Filament
+  buni light/dark rejimda avtomatik oq/qora qilib beradi) birlashtirilgan
+  bitta `HtmlString` sifatida beriladi (Filament yon panelidagi logo joyi
+  logotip YOKI matn ko'rsatadi, ikkalasini emas — shuning uchun
+  ikkalasini bitta HTML'ga birlashtirish kerak bo'ldi). Xuddi shu star
+  SVG base64 sifatida `->favicon()`ga ham beriladi — alohida fayl shart
+  emas. **Dark mode** — Filament'da standart yoqilgan
+  (`$hasDarkMode = true` default), `->darkMode(true, isForced: false)`
+  chaqiruvi shuni faqat aniq hujjatlashtiradi, hech narsani
+  o'zgartirmaydi.
+- **O'zbekcha interfeys** — ajablanarli tarzda, **Filament'ning o'zi
+  allaqachon yaxshi sifatli hamjamiyat tarjimasini o'z ichiga oladi**
+  (`uz` ko'plab boshqa tillar qatorida standart bilan keladi). Shunchaki
+  `php artisan vendor:publish --tag={filament-panels,filament-tables,
+  filament-actions,filament-forms,filament-infolists,
+  filament-notifications,filament-schemas,filament-widgets,
+  filament}-translations` orqali `lang/vendor/`ga chiqarildi (faqat
+  `en`/`uz` papkalari qoldirildi, boshqa ~60 til o'chirildi — kerak
+  emas), va `.env`da `APP_LOCALE=uz` (`APP_FALLBACK_LOCALE=en` —
+  `uz` faylida yo'q kalit avtomatik inglizchaga qaytadi, hech qachon
+  xom kalit nomi ko'rinmaydi) qo'yildi. **Bu global o'zgarish xavfsiz**:
+  loyihaning boshqa hech bir joyi (mijoz/xodim API'lari) Laravel'ning
+  `__()`/`trans()` tizimidan umuman foydalanmaydi — hammasi
+  to'g'ridan-to'g'ri PHP satrlari (tekshirib chiqilgan), shuning uchun
+  `app.locale`ni o'zgartirish FAQAT Filament panelining o'ziga ta'sir
+  qiladi. Ba'zi chuqurroq/kamdan-kam kalitlar (masalan
+  `filament-tables::table.result_count`) `uz` faylida yo'q — bular ham
+  xavfsiz inglizchaga qaytadi (`hammasini emas — faqat asosiy
+  matnlar" talabiga mos, ataylab to'liq audit qilinmadi).
+
 ## Kod konvensiyalari
 - Controller'lar yupqa (thin) bo'lsin — biznes mantiq Service/Model'da.
 - Har bir API javobi JSON, xatolarda mos HTTP status kod.
@@ -510,31 +726,39 @@ Tarjima maydonlari JSON ustun sifatida saqlanadi:
   migratsiya qo'shing (masalan `reviews.order_id` unique shunday qo'shilgan).
 
 ## Keyingi vazifalar (ustuvorlik tartibida)
-1. Filament admin panel — xodim qo'shish endi shunchaki uning haqiqiy
-   Telegram ID'sini kiritish (login/PIN emas); panel orqali `staff`
-   jadvaliga qo'lda `INSERT`/`UPDATE` qilish o'rniga qulay UI berish.
-2. Laravel Reverb (hozir KASSA/OSHXONA EGASI ~6 soniyalik polling bilan
+1. Laravel Reverb (hozir KASSA/OSHXONA EGASI ~6 soniyalik polling bilan
    ishlaydi — buni real-time push'ga almashtirish) va Click/Payme
    integratsiyasi (to'lov endi checkout'da tanlanmaydi — ofitsiant
    orqali oxirida amalga oshiriladi, haqiqiy to'lov shlyuzi hali
    ulanmagan).
-3. Mini App'ni doimiy (vaqtinchalik tunnel emas) HTTPS manzilga deploy
+2. Mini App'ni doimiy (vaqtinchalik tunnel emas) HTTPS manzilga deploy
    qilish va botni shunga qarab qayta sozlash — shu bilan birga
    `POST /api/telegram/webhook`ni haqiqiy `setWebhook` chaqiruvi bilan
    botga biriktirish (curl misoli yuqorida, "Xodimlarga Telegram guruh
    orqali xabarnoma" bo'limida — hozircha tunnel URL'i doimiy emasligi
-   sababli ataylab ishga tushirilmagan).
-4. Oshpaz/taom rasmlari (`chefs.photo_path`, `dishes.image_path`) va
-   `dishes.taste_*` uchun OSHXONA EGASI panelida boshqaruv UI — hozircha
-   faqat seeder orqali to'ldiriladi.
-5. Ofitsiantning "hisob" oqimini yakunlash: hozir `orders.payment_status`
+   sababli ataylab ishga tushirilmagan). **Endi shu bilan birga**
+   `/admin` (Filament SaaS operator paneli — pastga qarang) production
+   domenida ham ishlashini tekshirish, va production serverga
+   `php8.5-intl`/`php8.5-zip` PHP kengaytmalarini o'rnatish kerak
+   bo'ladi (quyidagi Filament bo'limidagi eslatmaga qarang).
+3. Oshpaz/taom rasmlari (`chefs.photo_path`, `dishes.image_path`) va
+   `dishes.taste_*` uchun OSHXONA EGASI panelida (yoki endi Filament
+   `DishResource`da) boshqaruv UI — hozircha faqat seeder orqali
+   to'ldiriladi, `DishResource`da `image_path` ataylab oddiy matn
+   maydoni (fayl yuklash emas).
+4. Ofitsiantning "hisob" oqimini yakunlash: hozir `orders.payment_status`
    hech qayerda `paid`ga o'zgartirilmaydi (standart `unpaid`da qoladi).
    Bu ustun va `WaiterCallController`dagi "hisob" xabarnomasi allaqachon
    tayyor — qolgani: ofitsiant "hisob to'landi" tugmasini bosganda
    tegishli buyurtma(lar)ni `paid`ga o'tkazish kerak.
-6. `restaurants.service_charge_percent` ustuni — hali yo'q, lekin
+5. `restaurants.service_charge_percent` ustuni — hali yo'q, lekin
    `Order::calculateTotal()` xuddi shunga tayyor qilib yozilgan
    (hozircha faqat `order_items` yig'indisini qaytaradi). Ustun
    qo'shilgach, shu metod ichida foizni qo'shish kifoya — barcha
    chaqiruvchilar (hisob xabarnomasi, kelajakdagi cheklar) avtomatik
    yangilanadi.
+6. Filament panelining o'z UI matnlari (tugmalar: "New restoran",
+   "Save changes", "Showing X to Y of Z results" va h.k.) hali
+   inglizcha — faqat MEN yozgan maydon/label/xabarlar o'zbekcha.
+   To'liq o'zbekcha qilish uchun Filament'ning o'z tarjima fayllarini
+   qayta e'lon qilish (til paketi) kerak bo'ladi — alohida, kattaroq ish.

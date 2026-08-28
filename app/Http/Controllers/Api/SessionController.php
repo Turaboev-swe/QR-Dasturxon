@@ -6,6 +6,7 @@ use App\Exceptions\InvalidQrSessionException;
 use App\Http\Controllers\Concerns\ResolvesLocale;
 use App\Http\Controllers\Controller;
 use App\Models\TelegramUser;
+use App\Services\DailyStatsService;
 use App\Services\TableResolver;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -16,6 +17,7 @@ class SessionController extends Controller
 
     public function __construct(
         private readonly TableResolver $tableResolver,
+        private readonly DailyStatsService $dailyStats,
     ) {}
 
     /**
@@ -39,6 +41,10 @@ class SessionController extends Controller
         /** @var TelegramUser|null $telegramUser */
         $telegramUser = $request->attributes->get('telegramUser');
         $locale = $this->resolveLocale($request, $telegramUser);
+
+        if ($telegramUser) {
+            $this->dailyStats->recordVisit($restaurant, $telegramUser);
+        }
 
         return response()->json([
             'language' => $locale,
